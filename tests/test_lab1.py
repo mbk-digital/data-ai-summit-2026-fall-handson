@@ -30,17 +30,17 @@ class FakeClient:
 class FakeCatalog:
     document = None
     def __init__(self, cfg, account=None, root=None):
-        pass
+        self.entry = f"projects/{cfg['project_id']}/locations/eu/entryGroups/test-group/entries/business-rules"
     def prepare_console_definition(self, starter):
         from workshop.catalog import concept
         document = self.document or starter
         fields, body = concept(document)
         return {'title': fields['title'], 'body': body, 'document': document,
-                'entry': 'test-entry', 'body_sha256': 'test-hash'}
+                'entry': self.entry, 'body_sha256': 'test-hash'}
     def sync(self, document):
         from workshop.catalog import concept
         fields, body = concept(document)
-        return {'title': fields['title'], 'body': body, 'entry': 'test-entry', 'body_sha256': 'test-hash'}
+        return {'title': fields['title'], 'body': body, 'entry': self.entry, 'body_sha256': 'test-hash'}
 
 
 class Lab1Tests(unittest.TestCase):
@@ -127,13 +127,18 @@ class Lab1Tests(unittest.TestCase):
         self.assertIn('まだ編集しません', text)
         self.assertLess(text.index('Knowledge Catalog で'), text.index('BigQuery Agents で'))
         self.assertNotIn('Knowledge Catalog Entry:', text)
+        expected_url = 'https://console.cloud.google.com/dataplex/dp-entries/projects/participant-project/locations/eu/entryGroups/test-group/entries/business-rules?project=participant-project'
+        self.assertIn(expected_url, text)
+        self.assertNotIn('/dp-search', text)
 
         starter = (self.root/'semantics/lab1-starter.txt').read_text()
         FakeCatalog.document = ('---\ntype: Metric\ntitle: Test\ndescription: Test\n---\n\n' + starter)
         FakeCatalog.document = FakeCatalog.document.replace('[[返金日]]', '返金日').replace('[[原価]]', '回収原価')
         FakeClient.calls = []
-        with redirect_stdout(io.StringIO()):
+        complete_output = io.StringIO()
+        with redirect_stdout(complete_output):
             agents = prepare_console(root=self.root, client_factory=FakeClient, catalog_factory=FakeCatalog)
+        self.assertIn(expected_url, complete_output.getvalue())
         self.assertEqual(list(agents), ['raw', 'defined', 'view'])
         self.assertEqual([call[0] for call in FakeClient.calls], ['ensure', 'ensure', 'ensure'])
         self.assertEqual((self.root/'participant/semantics.txt').read_text().strip(), FakeCatalog.document)

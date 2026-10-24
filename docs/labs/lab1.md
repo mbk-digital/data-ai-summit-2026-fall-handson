@@ -45,7 +45,7 @@ cd ~/summit-workshop && uv run --locked python3 -m workshop.lab1 prepare
 
 `prepare` の出力の「1.」の行にある Knowledge Catalog の URL を開きます。ここでは**場所の確認だけ**を行い、編集は手順 2 で行います。**定義を知らない状態の回答を先に見るため**です。
 
-1. 検索欄に `EC売上・粗利益の業務定義` と入力し、検索結果から同じ名前のエントリを開く。
+1. URL を開くと、`EC売上・粗利益の業務定義` の詳細画面が表示される。検索は不要。
 2. **詳細**（Details）タブの**概要**（Overview）の横にある**編集**（鉛筆アイコン）を押す。業務定義の本文が行番号付きで表示される。
 3. **12 行目と 13 行目の赤い文字**（`[[返金の計上日]]`、`[[返品で戻す原価]]`）を確認する。この 2 か所が、会社のルールがまだ書かれていない空欄で、手順 2 で埋める。
 4. 何も変えずに**変更を破棄**を押して閉じる。
@@ -105,7 +105,7 @@ Agent がどう考えたかを読みたい場合は、回答の上の「**思考
 
 ## 手順 2．Knowledge Catalog で会社の業務定義を編集する（7 分）
 
-手順 1 で開いたエントリに戻ります。タブを閉じた場合は、`prepare` の出力の「1.」の行にある Knowledge Catalog の URL をもう一度開き、`EC売上・粗利益の業務定義` を検索して開きます。この URL から開けば、自分の Project で開きます。画面上部に出るのは Project の表示名なので、`対象Project` の ID とは違って見えることがあります。違う Project かもしれないと思ったら、画面上部の Project の名前を押し、一覧の ID の列で確かめます。
+手順 1 で開いたエントリに戻ります。タブを閉じた場合は、`prepare` の出力の「1.」の行にある Knowledge Catalog の URL をもう一度開きます。`EC売上・粗利益の業務定義` の詳細画面に直接移動します。この URL から開けば、自分の Project で開きます。画面上部に出るのは Project の表示名なので、`対象Project` の ID とは違って見えることがあります。違う Project かもしれないと思ったら、画面上部の Project の名前を押し、一覧の ID の列で確かめます。
 
 **概要**の横にある**編集**を押します。
 
@@ -264,7 +264,7 @@ Google Cloud は、データに意味を与えて AI エージェントの土台
 | 状況 | 対応 |
 |---|---|
 | ②③が作られない | Knowledge Catalog のエントリの概要を保存したか、`[[...]]` が残っていないか確認してから `apply-rules` を再実行 |
-| Knowledge Catalog でエントリが見つからない | `対象Project` が同じか確認し、30 秒ほど待って `EC売上・粗利益の業務定義` を再検索。解消しなければ表示された `Knowledge Catalog Entry` を主催者へ共有 |
+| Knowledge Catalog のエントリを開けない | 検索結果ではなく、`prepare` の出力にある詳細 URL を開く。`対象Project` と Console のアカウントを確認し、解消しなければ URL とエラー表示をスタッフへ共有 |
 | エージェントがカタログに見つからない | Console の Project ID と `prepare` の出力の `対象Project` が同じか確認。名前ではなく ID（`ec-poc-…`）で表示されている場合や、同じ名前が複数ある場合は、`prepare`・`apply-rules` の出力の `ID:` と同じものを開く |
 | Cloud Shell を閉じた | Cloud Shell を開き直し、止まった手順のコマンドをもう一度実行。`uv: command not found` なら[事前準備の手順 1](preparation.md#手順-1実習用の環境を用意する)の折りたたみを確認 |
 | `You do not currently have an active account selected` と表示された | Cloud Shell を長く使わずにいると、認証が切れることがあります。Cloud Shell を閉じて開き直し、同じコマンドをもう一度実行 |

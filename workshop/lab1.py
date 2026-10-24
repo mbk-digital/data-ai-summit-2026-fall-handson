@@ -6,6 +6,7 @@ import json
 import re
 import sys
 import uuid
+from urllib.parse import quote, urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from .catalog import Catalog, as_document
 LABELS = {"raw": "① 業務定義なし", "defined": "② 業務定義あり", "view": "③ 業務定義あり＋集計View"}
 DISPLAY = "日本語で回答する。表示する期間は開始日と最終日を明記する（例：8月1日〜8月31日）。SQLは終了日を含まない条件を使用する。"
 AGENTS_URL = "https://console.cloud.google.com/bigquery/agents_hub?project="
-CATALOG_URL = "https://console.cloud.google.com/dataplex/dp-search?project="
+CATALOG_URL = "https://console.cloud.google.com/dataplex/dp-entries/"
 
 
 def initialize(root=ROOT):
@@ -69,6 +70,7 @@ def prepare_console(root=ROOT, account=None, selected_ids=("Q01", "Q04"), client
         print("#1 で使うエントリとエージェントを準備します。ここでは質問を送信しません。", flush=True)
     catalog = catalog_factory(cfg, account, root=root)
     receipt = catalog.prepare_console_definition(as_document(starter))
+    catalog_url = CATALOG_URL + quote(receipt["entry"], safe="/") + "?" + urlencode({"project": cfg["project_id"]})
     rules = receipt["document"].strip()
     complete = bool(rules) and "[[" not in rules and "]]" not in rules
     if apply and not complete:
@@ -114,10 +116,10 @@ def prepare_console(root=ROOT, account=None, selected_ids=("Q01", "Q04"), client
         print("   " + AGENTS_URL + cfg["project_id"], flush=True)
         print("\n".join(questions), flush=True)
         print("定義を確認する場合は Knowledge Catalog で「EC売上・粗利益の業務定義」を開きます", flush=True)
-        print("   " + CATALOG_URL + cfg["project_id"], flush=True)
+        print("   " + catalog_url, flush=True)
     else:
         print("1. Knowledge Catalog で「EC売上・粗利益の業務定義」を開き、空欄の場所を確認します（まだ編集しません）", flush=True)
-        print("   " + CATALOG_URL + cfg["project_id"], flush=True)
+        print("   " + catalog_url, flush=True)
         print("2. BigQuery Agents で「" + DISPLAY_NAMES["raw"] + "」に次の 2 問を送ります", flush=True)
         print("   " + AGENTS_URL + cfg["project_id"], flush=True)
         print("\n".join(questions), flush=True)
