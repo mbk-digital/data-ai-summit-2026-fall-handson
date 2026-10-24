@@ -3,7 +3,7 @@
 <body><a class="skip" href="#main">本文へ移動</a>
 <header><div class="brand"><span class="brand-mark" aria-hidden="true">A</span><div>AI AGENT WORKSHOP<small>#2 回答の裏側をたどる</small></div></div></header>
 <main id="main" tabindex="-1" class="single">
-<section class="panel" aria-labelledby="ask-heading"><h2 id="ask-heading">質問</h2><form action="/api/run" method="post" id="run-form"><input type="hidden" name="csrf" value="{{CSRF}}"><input type="hidden" name="context" value="{{CONTEXT}}"><input type="hidden" name="request_id" value="{{REQUEST_ID}}"><!-- 教材の仕込み：#2 では同じ分析を③に 2 回頼む作り（cache=off）のまま動かし、#3 で再利用する版と比べる。手順 3 まで伏せるため画面には出さない。 --><input type="hidden" name="cache" value="off">
+<section class="panel" aria-labelledby="ask-heading"><h2 id="ask-heading">質問</h2><form action="/api/run" method="post" id="run-form"><input type="hidden" name="csrf" value="{{CSRF}}"><input type="hidden" name="context" value="{{CONTEXT}}"><input type="hidden" name="request_id" value="{{REQUEST_ID}}"><!-- 教材の仕込み：#2 では同じ分析を③に 2 回頼む作り（cache=off）のまま動かし、#3 で再利用する版と比べる。重複依頼は冒頭で説明する。#2 では設定を変えず記録の確認に集中するため、切替操作は画面に出さない。 --><input type="hidden" name="cache" value="off">
 <label for="question" class="visually-hidden">分析したいこと</label><textarea id="question" name="question" required maxlength="2000" rows="3">2026年7月から8月にかけて、粗利益の減少額が最も大きいカテゴリと、その減少額を教えてください。</textarea>
 <button class="primary" id="run-button" type="submit">実行する <span aria-hidden="true">→</span></button><p class="hint target">実行先：<span id="project">読み込み中</span></p></form>
 <div id="status" class="status" role="status" aria-live="polite">質問を確認して「実行する」を押します。回答までに数十秒〜数分かかります。</div><p id="timer" class="hint"></p></section>
