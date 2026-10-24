@@ -1,0 +1,61 @@
+{
+  "version": "ec-evaluation-v1",
+  "cases": {
+    "Q01": {
+      "question_class": "standard_aggregation",
+      "answerability": "answerable",
+      "expected_routes": [
+        "verified_sql"
+      ]
+    },
+    "Q02": {
+      "question_class": "standard_aggregation",
+      "answerability": "answerable",
+      "expected_routes": [
+        "verified_sql"
+      ]
+    },
+    "Q03": {
+      "question_class": "standard_aggregation",
+      "answerability": "answerable",
+      "expected_routes": [
+        "verified_sql"
+      ]
+    },
+    "Q04": {
+      "question_class": "comparative_analysis",
+      "answerability": "answerable",
+      "expected_routes": [
+        "data_agent"
+      ]
+    },
+    "Q05": {
+      "question_class": "standard_aggregation",
+      "answerability": "answerable",
+      "expected_routes": [
+        "verified_sql"
+      ]
+    },
+    "Q06": {
+      "question_class": "standard_aggregation",
+      "answerability": "answerable",
+      "expected_routes": [
+        "verified_sql"
+      ]
+    },
+    "Q07": {
+      "question_class": "standard_aggregation",
+      "answerability": "answerable",
+      "expected_routes": [
+        "verified_sql"
+      ]
+    },
+    "Q08": {
+      "question_class": "unobservable_outcome",
+      "answerability": "unobservable",
+      "expected_routes": [
+        "data_agent"
+      ]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "version": "public-usd-2026-10-07-v3",
+  "checked_at": "2026-10-12",
+  "currency": "USD",
+  "basis": "Public list price; excludes trial, free tier, discounts and tax; not invoice",
+  "root_models": {
+    "gemini-3.8-flash": {
+      "input_per_million": 0.75,
+      "cached_input_per_million": 0.075,
+      "output_per_million": 3.75,
+      "price_through": "2026-12-31",
+      "note": "Introductory price; doubles from 2027-01-01. Checked on the Gemini API pricing page; the Vertex AI pricing page was not readable on 2026-10-07."
+    },
+    "gemini-2.5-flash": {
+      "input_per_million": 0.3,
+      "cached_input_per_million": 0.03,
+      "output_per_million": 2.5
+    }
+  },
+  "data_agent": {
+    "input_per_million": 3,
+    "output_per_million": 20,
+    "trial_through": "2026-12-31",
+    "effective_from": "2027-01-01"
+  },
+  "bigquery_on_demand_per_tib": {
+    "US": 6.25
+  },
+  "sources": [
+    "https://cloud.google.com/products/data-agents/pricing",
+    "https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing",
+    "https://cloud.google.com/bigquery/pricing",
+    "https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/",
+    "https://ai.google.dev/gemini-api/docs/pricing"
+  ]
+}

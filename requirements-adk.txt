@@ -1,0 +1,6 @@
+# #2 only. Python >=3.10; #1 remains standard-library only.
+google-adk==2.8.0
+google-genai==2.22.0
+google-auth==2.57.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-gcp-trace==1.15.0

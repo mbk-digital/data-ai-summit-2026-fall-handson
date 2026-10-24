@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv*/
+.env
+.env.*
+!.env.example
+artifacts/
+*.log
+credentials*.json
+service-account*.json
+config/workshop.local.json
+config/private-denylist.txt
+participant/
+
+# Local presentation outputs and agent tooling
+/output/
+/outputs/
+/tmp/
+/.codex/
+/.agents/
+AGENTS.md

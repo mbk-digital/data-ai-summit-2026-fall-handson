@@ -1,0 +1,17 @@
+{
+  "project_id": null,
+  "dataset_id": "ec_workshop",
+  "metrics_dataset_id": "ec_workshop_metrics",
+  "bigquery_location": null,
+  "data_agent_location": null,
+  "catalog_location": null,
+  "runtime_location": null,
+  "root_model_location": "global",
+  "model_ids": [],
+  "definition_version": "ec-finance-2026-09-v1",
+  "as_of_date": "2026-09-01",
+  "current_period": {"start": "2026-08-01", "end_exclusive": "2026-09-01"},
+  "previous_period": {"start": "2026-07-01", "end_exclusive": "2026-08-01"},
+  "currency": "JPY",
+  "synthetic_data_only": true
+}

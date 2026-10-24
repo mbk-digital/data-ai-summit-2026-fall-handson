@@ -1,0 +1,24 @@
+[project]
+name = "summit-ec-agent-workshop"
+version = "0.1.0"
+description = "Local, deterministic preparation kit for the Data & AI Summit workshop"
+requires-python = ">=3.10"
+# Keep in sync with requirements-adk.txt (tests/test_dependency_sync.py enforces this).
+# requirements-adk.txt stays as the provenance record hashed by workshop/root_agent.py.
+dependencies = [
+    "google-adk==2.8.0",
+    "google-genai==2.22.0",
+    "google-auth==2.57.1",
+    "opentelemetry-sdk==1.42.1",
+    "opentelemetry-exporter-gcp-trace==1.15.0",
+]
+
+[tool.uv]
+# The workshop is run from the checked-out folder, not installed as a package.
+package = false
+# Cloud Shell's preinstalled uv 0.12.2 was verified to sync this lock on 2026-10-03.
+required-version = ">=0.12.2"
+
+[tool.workshop]
+cloud-integration = "bigquery-and-data-agent-poc"
+
