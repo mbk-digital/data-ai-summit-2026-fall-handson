@@ -22,6 +22,7 @@ from .data_agent import fingerprint
 from .reference import all_answers
 from .evaluation import check_answer
 from .economics import atomic_save, read, digest, collect as collect_costs
+from .benchmark_view import cache_reused, cost_state, summary_lines
 
 VERSION = 'benchmark-v1'
 ID = re.compile(r'^[a-f0-9]{16}$')
@@ -213,6 +214,12 @@ def execute(root, ident, account=None, timeout=480):
         root_lock=root/'artifacts/.root-execution.lock'
         with root_lock.open('a') as active:
             fcntl.flock(active,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        # 送るのは、まだ記録のない回だけ。途中で止まった回（running）は送り直さない。
+        remaining=sum(not attempt_path(folder,t).exists() for t in value['trials']);total=len(value['trials'])
+        if remaining:
+            pace='（1 回あたり 1 分ほどが目安です。回によって変わります）'
+            print(('これから、あなたの Project の AI エージェントに '+str(remaining)+' 回質問を送ります' if remaining==total else
+                   str(total)+' 回のうち '+str(total-remaining)+' 回は送り終えています。残りの '+str(remaining)+' 回を送ります')+pace,flush=True)
         for index,trial in enumerate(value['trials'],1):
             verify_context(root,value)
             path=attempt_path(folder,trial)
@@ -229,7 +236,7 @@ def execute(root, ident, account=None, timeout=480):
             record={'run_id':trial['run_id'],'state':'running','started_at':timestamp(),'command_scope':'question_and_normal_runtime_options_only'}
             atomic_save(path,record)
             start=time.monotonic();process=None
-            print(str(index)+'/'+str(len(value['trials']))+' '+trial['case_id']+' '+label_of(value,trial['variant'])+' に質問しています（実行 ID '+trial['run_id']+'）',flush=True)
+            print(str(index)+'/'+str(len(value['trials']))+' '+trial['case_id']+' '+label_of(value,trial['variant'])+' に質問しています…',flush=True)
             try:
                 with (path.parent/'worker.log').open('w') as log:
                     process=subprocess.Popen(trial_command(root,value,trial,account),cwd=root,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
@@ -243,6 +250,7 @@ def execute(root, ident, account=None, timeout=480):
             except OSError as exc:record.update(state='failed',error=str(exc))
             finally:
                 record.update(finished_at=timestamp(),wall_seconds=round(time.monotonic()-start,3));atomic_save(path,record)
+            print('  → '+{'completed':'終わりました（'+str(round(record['wall_seconds']))+' 秒）','timeout':'8 分で打ち切りました。自動では送り直しません。この回の費用は計算しません'}.get(record['state'],'失敗しました。この回の費用は計算しません'),flush=True)
     return value
 
 
@@ -369,6 +377,8 @@ def report(root, ident):
             'expected_route_match':selected in case['expected_routes'] if selected else None,
             'elapsed_seconds':attempt.get('wall_seconds'),'reference_total_usd':total,'reference_total_upper_usd':upper,'known_subtotal_usd':small,
             'missing_cost_components':missing_components,'evidence_sha256':evidence_hash,
+            'cost_state':cost_state(root,attempt['state'],run,measurement if identity else None),
+            'bigquery_cache_reused':cache_reused(measurement.get('components')) if measurement and identity else False,
             'cost_components':measurement.get('components') if measurement and identity else None,
             'answer':run.get('answer'),'evidence':evidence})
     timing=common_timing(rows,value['variants'])
@@ -397,7 +407,7 @@ def report(root, ident):
             'physical_route_calls':{route:sum(event.get('route')==route for x in group for event in x['routing'].get('events',[])) for route in sorted({event['route'] for x in group for event in x['routing'].get('events',[]) if event.get('route')})},
             'route_matches':sum(x['expected_route_match'] is True for x in group),'route_unknown':sum(x['expected_route_match'] is None for x in group),
             'coverage_by_class':{category:{'planned':sum(x['question_class']==category for x in group),'structured_successes':sum(x['question_class']==category and x['structured_success'] for x in group),'abstained':sum(x['question_class']==category and x['outcome']=='abstained' for x in group)} for category in sorted({x['question_class'] for x in group})}})
-    result={'version':VERSION,'batch_id':ident,'generated_at':timestamp(),'plan_sha256':sha(value),'pricing_version':value['pricing']['version'],
+    result={'version':VERSION,'batch_id':ident,'preset':value.get('preset'),'created_at':value.get('created_at'),'generated_at':timestamp(),'plan_sha256':sha(value),'pricing_version':value['pricing']['version'],
             'review_policy':'participant-v1','evaluation_scope':'public_structured_contract_separate_provenance_and_human_review',
             'actual_billed_usd':None,'ranking':None,'groups':groups,'trials':rows,'timing_comparison':timing,
             'limitations':['公開問題の暫定評価。本番品質・公式順位ではない','合格率の分母は予定試行。未実行数と合わせて読む','費用は公表単価の参考換算。部分小計で順位を付けない','Data Agentの取得元は時刻等で推定、SQL ToolはジョブIDで照合。SQLの意味と回答文は人が確認する','人の確認は参加者の学習用。公式評価には主催者環境での再実行と確認が必要']}
@@ -442,12 +452,35 @@ def collect(root, ident, mode, account=None):
     return report(root,ident)
 
 
+def export_example(root, cfg, ident, output, account=None):
+    """講師の記録例：費用の揃った計画から、識別子を除いた JSON と GitHub で読むページを書き出す。"""
+    from .benchmark_view import example_markdown, example_record, span_breakdown
+    from .cloud import Client
+    folder,value=load_plan(root,ident);result=report(root,ident)
+    traces=[]
+    for cache in ('off','on'):
+        trial=q01_trial(value,cache)
+        if not trial:continue
+        run=read(root/'artifacts/lab2'/trial['run_id']/'run.json')
+        if not re.fullmatch('[a-f0-9]{32}',str(run.get('trace_id',''))):raise ValueError('Q01 の Trace の記録がないため、講師の記録例にしません')
+        trace=Client(cfg,account).request('GET','https://cloudtrace.googleapis.com/v1/projects/'+cfg['project_id']+'/traces/'+run['trace_id'])
+        summary=span_breakdown(trace)
+        if not summary:raise ValueError('Q01 の Trace を読めないため、講師の記録例にしません')
+        traces.append({'case_id':'Q01','variant_label':label_of(value,trial['variant']),**summary})
+    from .benchmark_view import check_public
+    record=example_record(result,value,traces,root);markdown=example_markdown(record)
+    check_public(markdown,root,cfg['project_id'])  # どちらも確かめてから、どちらも書く
+    page=root/'docs/labs/lab3-example.md'
+    atomic_save(output,record);page.parent.mkdir(parents=True,exist_ok=True);page.write_text(markdown,encoding='utf-8')
+    return output,page
+
+
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['plan','run','collect','report','review','links','show'])
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['plan','run','collect','report','review','links','show','export-example'])
     p.add_argument('--batch');p.add_argument('--preset',choices=sorted(PRESETS));p.add_argument('--cases',nargs='+');p.add_argument('--repeats',type=int)
     p.add_argument('--cache',action='append',choices=['on','off']);p.add_argument('--model',action='append');p.add_argument('--language',choices=['ja','en'],default='ja')
     p.add_argument('--route',action='append',choices=['data_agent','verified_sql','router']);p.add_argument('--account');p.add_argument('--billing-mode',choices=['unknown','on-demand','capacity'],default='unknown')
-    p.add_argument('--run-id');p.add_argument('--decision',choices=['pass','fail']);p.add_argument('--note',default='');p.add_argument('--port',type=int,default=8080)
+    p.add_argument('--run-id');p.add_argument('--decision',choices=['pass','fail']);p.add_argument('--note',default='');p.add_argument('--port',type=int,default=8080);p.add_argument('--output',help='export-example のみ。書き出す JSON のパス（GitHub で読むページは docs/labs/lab3-example.md）')
     a=p.parse_args()
     try:
         cfg=config(require_project=True);print('対象Project: '+cfg['project_id'],flush=True)
@@ -483,18 +516,28 @@ def main():
             from .checkpoint import require_ready
             require_ready(ROOT,a.account)
             execute(ROOT,a.batch,a.account);result=report(ROOT,a.batch)
-            print(json.dumps(result['groups'],ensure_ascii=False,indent=2))
-            print_links(ROOT,cfg,load_plan(ROOT,a.batch)[1],a.account);return 0
+            print('\n'+'\n'.join(summary_lines(result,'run')),flush=True)
+            print_links(ROOT,cfg,load_plan(ROOT,a.batch)[1],a.account)
+            print('\n手順 2・3 が終わったら、手順 4 で費用を計算します：cd ~/summit-workshop && uv run --locked python3 -m workshop.benchmark collect --billing-mode on-demand',flush=True);return 0
         elif a.command=='links':
             print_links(ROOT,cfg,load_plan(ROOT,a.batch)[1],a.account,attempts=1);return 0
         elif a.command=='show':
             from .web import main as web_main
             return web_main(['--port',str(a.port),'--benchmark',a.batch])
-        elif a.command=='collect':result=collect(ROOT,a.batch,a.billing_mode,a.account)
-        elif a.command=='review':result=review(ROOT,a.batch,a.run_id,a.decision,a.note)
-        else:result=report(ROOT,a.batch)
+        elif a.command=='collect':
+            result=collect(ROOT,a.batch,a.billing_mode,a.account)
+            print('\n'.join(summary_lines(result,'collect')));return 0
+        elif a.command=='review':
+            review(ROOT,a.batch,a.run_id,a.decision,a.note)
+            print('人の確認を記録しました（実行 ID '+a.run_id+'：'+a.decision+'）。比べる画面を再読み込みすると反映されます。');return 0
+        elif a.command=='export-example':
+            if not a.output:p.error('--output is required')
+            path,page=export_example(ROOT,cfg,a.batch,Path(a.output),a.account)
+            print('講師の記録例を書き出しました：'+str(path)+' と '+str(page.relative_to(ROOT)));return 0
+        # report は講師・検証記録用。集計を JSON のまま出す。
+        result=report(ROOT,a.batch)
         print(json.dumps(result['groups'],ensure_ascii=False,indent=2));return 0
     except (CloudError,OSError,ValueError) as exc:print(str(exc),file=sys.stderr);return 2
-    except KeyboardInterrupt:print('中断記録を保存しました。同じ計画で再開できます。',file=sys.stderr);return 130
+    except KeyboardInterrupt:print('途中で止めました。送り終えた回の記録は残っています。同じコマンドをもう一度実行すると、まだ送っていない質問から続けます。',file=sys.stderr);return 130
 
 if __name__=='__main__':sys.exit(main())

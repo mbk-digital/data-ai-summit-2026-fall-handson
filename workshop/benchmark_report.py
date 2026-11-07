@@ -4,6 +4,9 @@ import json
 import re
 from .cloud import modern_trace_url
 from .economics import read
+from .benchmark_view import STATE_NOTES, data_agent_calls, timing_note
+
+EXAMPLE = 'data/examples/lab3-instructor-record.json'
 
 
 def esc(value):
@@ -17,11 +20,121 @@ def money(value, upper=None):
 
 def frame(body):
     return """<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>#3 Economics — 評価記録</title>
-<style>:root{font-family:system-ui,sans-serif;color:#2B356B;background:#f4f8fb}body{margin:0}main{max-width:1200px;margin:auto;padding:2rem}a{color:#33578E}a:focus-visible,summary:focus-visible{outline:3px solid #1490C4;outline-offset:4px}nav{display:flex;gap:1.5rem;flex-wrap:wrap}h1{font-size:clamp(1.8rem,4vw,2.5rem)}section,article{background:white;border:1px solid #cbdce7;border-radius:12px;padding:1.4rem;margin:1.2rem 0}h2{border-left:5px solid #3FA4AC;padding-left:.8rem}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{text-align:left;border-bottom:1px solid #dce6eb;padding:.7rem;vertical-align:top}th{background:#eaf5f8}caption{text-align:left;font-weight:600;padding:.8rem 0}.scroll{overflow:auto}summary{cursor:pointer;padding:.7rem 0;font-weight:600}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#25314e;background:#f4f8fb;padding:1rem}p,li{line-height:1.7}.hint{color:#425778}.tag{display:inline-block;background:#eaf5f8;border-radius:8px;padding:.2rem .5rem}code{overflow-wrap:anywhere}</style>
+<style>:root{font-family:system-ui,sans-serif;color:#2B356B;background:#f4f8fb}body{margin:0}main{max-width:1200px;margin:auto;padding:2rem}a{color:#33578E}a:focus-visible,summary:focus-visible{outline:3px solid #1490C4;outline-offset:4px}nav{display:flex;gap:1.5rem;flex-wrap:wrap}h1{font-size:clamp(1.8rem,4vw,2.5rem)}section,article{background:white;border:1px solid #cbdce7;border-radius:12px;padding:1.4rem;margin:1.2rem 0}h2{border-left:5px solid #3FA4AC;padding-left:.8rem}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}th,td{text-align:left;border-bottom:1px solid #dce6eb;padding:.7rem;vertical-align:top}th{background:#eaf5f8}caption{text-align:left;font-weight:600;padding:.8rem 0}.scroll{overflow:auto}summary{cursor:pointer;padding:.7rem 0;font-weight:600}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#25314e;background:#f4f8fb;padding:1rem}p,li{line-height:1.7}.hint{color:#425778}.tag{display:inline-block;background:#eaf5f8;border-radius:8px;padding:.2rem .5rem}code{overflow-wrap:anywhere}.chip{display:inline-block;border-radius:999px;padding:.1rem .6rem;font-size:.85rem;font-weight:600;background:#eef3f7}.ok{background:#e6f4ec;color:#1f6b45}.hold{background:#fbf1dc;color:#6b4f10}.bad{background:#fbe4e4;color:#8a1f1f}.cell a{color:inherit;text-decoration:none;display:block}.cell a:hover{background:#f4f8fb}.cell small{display:block;color:#425778}.example{background:#f6f2fb;border-color:#d8cbe9}.notice{background:#fff7e0;border:1px solid #ecd58c;border-radius:10px;padding:.8rem 1rem}.bar{display:grid;grid-template-columns:9em 1fr 7em;gap:.6rem;align-items:center;margin:.3rem 0}.track{background:#eef3f7;border-radius:6px;height:14px;overflow:hidden}.fill{height:100%;background:#33578E}.fill.on{background:#3FA4AC}@media (max-width:640px){.bar{grid-template-columns:6em 1fr 6em}main{padding:1rem}}</style>
 <main><nav aria-label="ハンズオン"><a href="/lab1">01 Semantics</a><a href="/">02 Observability</a><a href="/benchmarks" aria-current="page">03 Economics</a></nav>"""+body+'</main></html>'
 
 
-def render(value):
+def status_chip(t):
+    if t['attempt_state']=='pending':return '<span class="chip">未実行</span>'
+    if t['attempt_state']=='running':return '<span class="chip">実行中</span>'
+    if t['attempt_state'] not in ('completed','recovered') or t['outcome']=='execution_failed':return '<span class="chip bad">失敗</span>'
+    if not t['structured_success']:return '<span class="chip bad">不合格</span>'
+    return '<span class="chip '+('hold">保留・合格' if t['outcome']=='abstained' else 'ok">回答・合格')+'</span>'
+
+
+def trial_cost(t):
+    state=t.get('cost_state')
+    if t['reference_total_usd'] is not None:return f"{t['reference_total_usd']:.3f} USD"
+    if t.get('reference_total_upper_usd') is not None:return f"未算出（最大 {t['reference_total_upper_usd']:.3f} USD）"
+    return {'failed':'未算出（失敗）','not_collected':'未計算','pending':'—'}.get(state,'未算出')
+
+
+def seconds(value):
+    return '—' if value is None else f'{value:.1f} 秒'
+
+
+def anchor(t):
+    return 'trial-'+re.sub('[^A-Za-z0-9-]','-',t['case_id']+'-'+t['variant'])
+
+
+def jst_full(stamp):
+    import datetime as dt
+    try:return dt.datetime.fromisoformat(stamp).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%Y-%m-%d %H:%M')
+    except (TypeError,ValueError):return '日時不明'
+
+
+def totals_table(rows, caption):
+    """rows: (label, successes, planned, total, median, timing_trials, calls)。差は 2 つとも揃ったときだけ。"""
+    head='<table><caption>'+esc(caption)+'</caption><thead><tr><th scope="col"></th>'+''.join('<th scope="col">'+esc(r[0])+'</th>' for r in rows)+('<th scope="col">差</th>' if len(rows)==2 else '')+'</tr></thead><tbody>'
+    def diff(a,b):
+        return '—' if a is None or b is None or not a else f'{(b-a)/a*100:+.0f}%'
+    lines=[('自動チェックの合格',[str(r[1])+' / '+str(r[2]) for r in rows],''),
+           ('参考費用（合計）',[('未算出' if r[3] is None else f'{r[3]:.3f} USD') for r in rows],diff(rows[0][3],rows[1][3]) if len(rows)==2 else ''),
+           ('処理時間の中央値',[seconds(r[4])+('' if r[5] is None else '（'+str(r[5])+' 問）') for r in rows],diff(rows[0][4],rows[1][4]) if len(rows)==2 else ''),
+           ('Data Agent に頼んだ回数',[str(r[6])+' 回' for r in rows],'')]
+    body=''.join('<tr><th scope="row">'+esc(name)+'</th>'+''.join('<td>'+esc(c)+'</td>' for c in cells)+('<td>'+esc(d)+'</td>' if len(rows)==2 else '')+'</tr>' for name,cells,d in lines)
+    return '<div class="scroll" tabindex="0" role="region" aria-label="'+esc(caption)+'">'+head+body+'</tbody></table></div>'
+
+
+def bars(rows):
+    out=[]
+    for title,index,fmt in (('参考費用（合計）',3,lambda v:f'{v:.3f} USD'),('処理時間の中央値',4,lambda v:f'{v:.1f} 秒')):
+        values=[r[index] for r in rows]
+        if any(v is None for v in values) or not max(values):continue
+        top=max(values)
+        out.append('<h3>'+title+'</h3>'+''.join('<div class="bar"><span>'+esc(r[0].replace('Data Agent・',''))+'</span><div class="track"><div class="fill'+(' on' if n else '')+'" style="width:'+str(round(r[index]/top*100))+'%"></div></div><span>'+fmt(r[index])+'</span></div>' for n,r in enumerate(rows)))
+    return ''.join(out)
+
+
+def render_summit(value, example=None):
+    """Summit の #3（--preset summit）の比べる画面。判定と数字は report のまま、読み方だけを変える。"""
+    trials=value['trials'];groups=value['groups']
+    done=sum(t['attempt_state'] not in ('pending','running') for t in trials)
+    parts=['<h1>#3 の結果</h1>',
+           '<p>3 つの質問を、'+str(len(groups))+' つのやり方で 1 回ずつ答えさせました（合計 '+str(len(trials))+' 回のうち '+str(done)+' 回が終了）。評価計画 <code>'+esc(value['batch_id'])+'</code>、日本時間 '+esc(jst_full(value.get('created_at')))+' に作成。</p>',
+           '<p class="notice">費用は<strong>参考の見積もり</strong>です（使った量 × 公表価格。請求額ではありません）。Data Agent は 2026-12-31 まで無料試用中のため、今は Data Agent の分の料金はかかりません。「未算出」は 0 円という意味ではありません。</p>']
+    if done<len(trials):parts.append('<p class="notice">まだ実行中です。終わってから、このページを再読み込みしてください。</p>')
+    cases=list(dict.fromkeys(t['case_id'] for t in trials))
+    by={(t['case_id'],t['variant']):t for t in trials}
+    grid=['<section aria-labelledby="grid"><h2 id="grid">質問 × やり方</h2><p class="hint">マスを押すと、その回の記録へ移動します。「合格」は教材の自動チェック（数字・期間・単位）に合格したこと、「保留」は「データからは言い切れない」と判断を保留したことです。回答文の中身は、手順 5 で人が確かめます。</p><div class="scroll" tabindex="0" role="region" aria-label="質問 × やり方"><table><thead><tr><th scope="col">質問</th>'+''.join('<th scope="col">'+esc(g['label'])+'</th>' for g in groups)+'</tr></thead><tbody>']
+    for case in cases:
+        question=next(t['question'] for t in trials if t['case_id']==case)
+        grid.append('<tr><th scope="row">'+esc(case)+'<small class="hint" style="display:block;font-weight:400">'+esc(question)+'</small></th>')
+        for g in groups:
+            t=by.get((case,g['variant']))
+            grid.append('<td class="cell">'+('—' if not t else '<a href="#'+anchor(t)+'">'+status_chip(t)+'<small>参考費用 '+esc(trial_cost(t))+'</small><small>処理時間 '+esc(seconds(t['elapsed_seconds']))+'</small><small>Data Agent に頼んだ回数 '+str(data_agent_calls(t))+' 回</small></a>')+'</td>')
+        grid.append('</tr>')
+    grid.append('</tbody></table></div></section>')
+    parts+=grid
+    rows=[(g['label'],g['structured_successes'],g['planned'],g['reference_total_usd'],(g.get('common_timing') or {}).get('median_seconds'),(g.get('common_timing') or {}).get('trials'),sum(data_agent_calls(t) for t in trials if t['variant']==g['variant'])) for g in groups]
+    # 中央値だけを見ると「時間も半分になった」と読まれやすい。短縮するかどうかは断定しない。
+    time_note='中央値の差だけで判断せず、質問ごとの処理時間も確認してください。'
+    notes=[n for n in [timing_note(value)] if n]
+    if len(rows)==2 and all(r[4] is not None for r in rows):notes.insert(0,time_note)
+    states=[t.get('cost_state') for t in trials]
+    notes+=[STATE_NOTES[s] for s in ('failed','permission','unmatched','waiting','unknown','not_collected') if s in states]
+    parts.append('<section aria-labelledby="totals"><h2 id="totals">やり方ごとの合計</h2><p class="hint">同じエージェントで、Data Agent に頼む回数だけを変えています。費用の差は、両方とも全回の費用を計算できたときだけ出します。上限（「最大」）は差に使いません。</p>'
+                 +totals_table(rows,'あなたの結果')+bars(rows)+''.join('<p class="hint">'+esc(n)+'</p>' for n in notes)+'</section>')
+    if example:
+        erows=[(g['label'],g['structured_successes'],g['planned'],g['reference_total_usd'],g.get('median_seconds'),g.get('timing_trials'),g['data_agent_calls']) for g in example['groups']]
+        parts.append('<section class="example"><details><summary>講師の記録例と比べる（あなたの結果ではありません）</summary><p>評価計画 <code>'+esc(example['batch_id'])+'</code>、日本時間 '+esc(jst_full(example.get('created_at')))+' に作成。同じ 3 問・同じやり方を、講師の環境で実行した結果です。</p>'
+                     +totals_table(erows,'講師の記録例')+'<p class="hint">'+esc(time_note)+'講師の記録例の質問ごとの処理時間は、講師の記録例のページの「質問ごとの結果」にあります。</p></details></section>')
+    else:
+        parts.append('<section class="example"><p class="hint">講師の記録例は準備中です。</p></section>')
+    parts.append('<h2>質問ごとの記録</h2>')
+    for t in trials:
+        components=t.get('cost_components') or {}
+        def part(key):
+            if key not in components:return '—'
+            amount=components[key].get('reference_usd')
+            return '未算出' if amount is None else f'{amount:.6f} USD'
+        bq=part('bigquery_query')+('（BigQuery が保存済みのクエリ結果を再利用したため）' if t.get('bigquery_cache_reused') else '')
+        answer=(t.get('answer') or {}).get('customer_message_ja')
+        trace=modern_trace_url(t.get('trace_console_url'))
+        link='<a href="'+esc(trace)+'" target="_blank" rel="noopener">Cloud Trace で処理を開く ↗</a>' if isinstance(trace,str) and trace.startswith('https://console.cloud.google.com/') else 'Cloud Trace のリンクはありません'
+        state=t.get('cost_state')
+        parts.append('<article id="'+anchor(t)+'"><h3>'+esc(t['case_id'])+' · '+esc(t['variant_label'])+'</h3><p>'+esc(t['question'])+'</p><p>'+status_chip(t)+' 処理時間 '+esc(seconds(t['elapsed_seconds']))+' ／ Data Agent に頼んだ回数 '+str(data_agent_calls(t))+' 回 ／ 人の確認 '+esc({'pass':'渡せる','fail':'直す必要あり'}.get(t.get('human_review'),'未確認'))+'</p>'
+                     +('<h4>回答文</h4><p>'+esc(answer)+'</p>' if answer else '<p class="hint">回答文はありません。</p>')
+                     +'<table><caption>参考費用の内訳</caption><tbody><tr><th scope="row">Root Agent の AI</th><td>'+esc(part('root_model'))+'</td></tr><tr><th scope="row">Data Agent</th><td>'+esc(part('data_agent'))+'</td></tr><tr><th scope="row">BigQuery</th><td>'+esc(bq)+'</td></tr><tr><th scope="row">合計</th><td>'+esc(trial_cost(t))+'</td></tr></tbody></table>'
+                     +('<p class="hint">'+esc(STATE_NOTES[state])+'</p>' if state in STATE_NOTES else '')
+                     +'<p class="hint">'+link+' ／ 実行 ID <code>'+esc(t['run_id'])+'</code>（手順 5 で人の確認を記録するときに使います）</p>'
+                     +'<details><summary>講師用の詳しい記録</summary><pre>'+esc(json.dumps({'answer':t.get('answer'),'errors':t['errors'],'evidence':t.get('evidence'),'provenance':t.get('provenance'),'routing':t.get('routing'),'cost_components':components},ensure_ascii=False,indent=2))+'</pre></details></article>')
+    parts.append('<section><details><summary>講師用の集計とこの結果の範囲</summary><ul>'+''.join('<li>'+esc(x)+'</li>' for x in value['limitations'])+'</ul><pre>'+esc(json.dumps({'groups':groups,'timing_comparison':value.get('timing_comparison')},ensure_ascii=False,indent=2))+'</pre></details></section>')
+    return frame(''.join(parts))
+
+
+def render(value, example=None):
+    if value.get('preset')=='summit':return render_summit(value,example)
     parts=['<h1>品質・対応範囲・費用を比べる</h1><p>Production-ready AI Agents on Google Cloud<br>本番運用に向けて、業務定義・観測・費用を学ぶハンズオン</p>',
            '<p class="hint">評価計画 <code>'+esc(value['batch_id'])+'</code> ／価格表 '+esc(value['pricing_version'])+'</p>',
            '<p>費用は公表単価からの参考換算で、請求額ではありません。途中の小計による順位付けは行いません。回答の検査合格と参加者が内容を確認した成功を分けています。参加者確認は学習用で、主催者による公式評価ではありません。旧記録の確認者区分が不明な判定は引き継ぎません。</p>']
@@ -77,7 +190,8 @@ def page(root, cfg, ident=None):
         if not (folder/'plan.json').is_file() or not (folder/'report.json').is_file():return None
         plan=read(folder/'plan.json');context=plan.get('context',{}).get('config',{})
         if any(context.get(k)!=cfg.get(k) for k in ('project_id','dataset_id')):return None
-        return render(read(folder/'report.json'))
+        example=root/EXAMPLE
+        return render(read(folder/'report.json'),read(example) if example.is_file() else None)
     items=[]
     for folder in sorted(base.glob('*'),reverse=True):
         if not re.fullmatch('[a-f0-9]{16}',folder.name) or not (folder/'plan.json').is_file():continue

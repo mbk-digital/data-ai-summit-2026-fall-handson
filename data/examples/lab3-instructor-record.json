@@ -1,0 +1,329 @@
+{
+  "version": "lab3-instructor-record-v1",
+  "batch_id": "1bc3072f92344d6d",
+  "created_at": "2026-10-30T05:51:46.943179+00:00",
+  "pricing_version": "public-usd-2026-10-07-v3",
+  "groups": [
+    {
+      "label": "Data Agent・毎回取得",
+      "planned": 3,
+      "structured_successes": 3,
+      "reference_total_usd": 0.9379925116,
+      "median_seconds": 86.503,
+      "timing_trials": 3,
+      "data_agent_calls": 6
+    },
+    {
+      "label": "Data Agent・再利用",
+      "planned": 3,
+      "structured_successes": 3,
+      "reference_total_usd": 0.4651380872,
+      "median_seconds": 44.79,
+      "timing_trials": 3,
+      "data_agent_calls": 3
+    }
+  ],
+  "trials": [
+    {
+      "case_id": "Q01",
+      "question": "2026年8月の純売上はいくらですか。",
+      "variant_label": "Data Agent・毎回取得",
+      "outcome": "answered",
+      "structured_success": true,
+      "elapsed_seconds": 50.722,
+      "data_agent_calls": 2,
+      "reference_total_usd": 0.2841468372,
+      "cost": {
+        "root_model": 0.005406,
+        "data_agent": 0.278264,
+        "bigquery_query": 0.0004768372
+      },
+      "bigquery_cache_reused": false,
+      "answer_text": "2026年8月1日から2026年8月31日における純売上は240,000円です。本集計は完了（COMPLETED）注文および計上対象の返金イベントに基づき算出されています。なお、本結果は分析用レポートであり、業務データの変更や確定処理を行うものではありません。"
+    },
+    {
+      "case_id": "Q01",
+      "question": "2026年8月の純売上はいくらですか。",
+      "variant_label": "Data Agent・再利用",
+      "outcome": "answered",
+      "structured_success": true,
+      "elapsed_seconds": 44.79,
+      "data_agent_calls": 1,
+      "reference_total_usd": 0.14511025,
+      "cost": {
+        "root_model": 0.00608925,
+        "data_agent": 0.139021,
+        "bigquery_query": 0.0
+      },
+      "bigquery_cache_reused": true,
+      "answer_text": "2026年8月（2026年8月1日〜2026年8月31日）の純売上は240,000円です。本結果はv_revenue_eventsビューの集計に基づき、税・送料は含まれていません。また、確定後の修正や将来の業績を保証するものではありません。"
+    },
+    {
+      "case_id": "Q04",
+      "question": "2026年7月と比べて8月の粗利益が最も減ったカテゴリと、8月から7月を引いた差額を教えてください。",
+      "variant_label": "Data Agent・毎回取得",
+      "outcome": "answered",
+      "structured_success": true,
+      "elapsed_seconds": 203.676,
+      "data_agent_calls": 2,
+      "reference_total_usd": 0.3234705872,
+      "cost": {
+        "root_model": 0.01645875,
+        "data_agent": 0.306535,
+        "bigquery_query": 0.0004768372
+      },
+      "bigquery_cache_reused": false,
+      "answer_text": "2026年7月（2026年7月1日〜2026年7月31日）と2026年8月（2026年8月1日〜2026年8月31日）を比較した結果、粗利益が最も減少したカテゴリは「Electronics」でした。\n\n8月の粗利益（-24,000円）から7月の粗利益（40,000円）を引いた差額は -64,000円 です。\n\n【集計の前提と留意事項】\n・本集計は確定済（COMPLETED）の注文のみを対象とし、出荷済み・未完了（SHIPPED）およびキャンセル（CANCELLED）は除外しています。\n・売上は注文日、返金および回収原価は返金日に計上する業務定義（ec-finance-2026-09-v1）に基づいています。\n・本結果は過去の実績データの集計分析であり、将来の業績改善や利益増加を保証するものではありません。"
+    },
+    {
+      "case_id": "Q04",
+      "question": "2026年7月と比べて8月の粗利益が最も減ったカテゴリと、8月から7月を引いた差額を教えてください。",
+      "variant_label": "Data Agent・再利用",
+      "outcome": "answered",
+      "structured_success": true,
+      "elapsed_seconds": 124.258,
+      "data_agent_calls": 1,
+      "reference_total_usd": 0.1642701686,
+      "cost": {
+        "root_model": 0.01215675,
+        "data_agent": 0.151875,
+        "bigquery_query": 0.0002384186
+      },
+      "bigquery_cache_reused": false,
+      "answer_text": "2026年7月（2026年7月1日〜7月31日）と比較して2026年8月（2026年8月1日〜8月31日）の粗利益が最も減少したカテゴリは「Electronics」です。\n\n8月の粗利益から7月の粗利益を引いた差額は -64,000円 でした（7月：40,000円、8月：-24,000円）。\n\n※本分析は完了（COMPLETED）注文および返金イベントに基づき算出された過去実績の集計であり、将来の利益や業績の改善を保証するものではありません。"
+    },
+    {
+      "case_id": "Q08",
+      "question": "2026年9月も同じセールを実施すれば、必ず粗利益が増えますか。",
+      "variant_label": "Data Agent・毎回取得",
+      "outcome": "abstained",
+      "structured_success": true,
+      "elapsed_seconds": 86.503,
+      "data_agent_calls": 2,
+      "reference_total_usd": 0.3303750872,
+      "cost": {
+        "root_model": 0.02840625,
+        "data_agent": 0.301492,
+        "bigquery_query": 0.0004768372
+      },
+      "bigquery_cache_reused": false,
+      "answer_text": "2026年9月に同じセールを実施しても、必ず粗利益が増加するとは保証できません。過去の販売実績に基づいて将来の利益増加を保証することはできません。また、2026年8月（2026年8月1日〜8月31日）の実績においても、Electronicsカテゴリで粗利益が前月比-64,000円（当月は-24,000円の赤字）となるなど、セール実施によってすべてのカテゴリで粗利益が増加するわけではないことが確認されています。"
+    },
+    {
+      "case_id": "Q08",
+      "question": "2026年9月も同じセールを実施すれば、必ず粗利益が増えますか。",
+      "variant_label": "Data Agent・再利用",
+      "outcome": "abstained",
+      "structured_success": true,
+      "elapsed_seconds": 32.796,
+      "data_agent_calls": 1,
+      "reference_total_usd": 0.1557576686,
+      "cost": {
+        "root_model": 0.00682725,
+        "data_agent": 0.148692,
+        "bigquery_query": 0.0002384186
+      },
+      "bigquery_cache_reused": false,
+      "answer_text": "過去の販売実績やキャンペーン結果から、将来の利益増加を保証することはできません（対象期間：2026年9月1日〜2026年9月30日）。セール施策は売上総額を拡大できる可能性がある一方で、値引きや返品・返金に伴う影響によって純売上および粗利益が大きく変動するため、同様のセールを実施した場合でも必ず粗利益が増加するとは限りません。"
+    }
+  ],
+  "traces": [
+    {
+      "case_id": "Q01",
+      "variant_label": "Data Agent・毎回取得",
+      "root_name": "workshop.request",
+      "total_seconds": 42.0,
+      "spans": [
+        {
+          "name": "catalog.fetch_definition",
+          "depth": 0,
+          "count": 1,
+          "seconds": [
+            7.9
+          ]
+        },
+        {
+          "name": "invocation",
+          "depth": 0,
+          "count": 1,
+          "seconds": [
+            32.4
+          ]
+        },
+        {
+          "name": "invoke_agent ec_root",
+          "depth": 1,
+          "count": 1,
+          "seconds": [
+            32.1
+          ]
+        },
+        {
+          "name": "call_llm",
+          "depth": 2,
+          "count": 2,
+          "seconds": [
+            25.3,
+            6.5
+          ]
+        },
+        {
+          "name": "generate_content gemini-3.8-flash",
+          "depth": 3,
+          "count": 2,
+          "seconds": [
+            4.7,
+            6.2
+          ]
+        },
+        {
+          "name": "execute_tool analyze_ec",
+          "depth": 3,
+          "count": 1,
+          "seconds": [
+            20.4
+          ]
+        },
+        {
+          "name": "evidence.two_consumers",
+          "depth": 4,
+          "count": 1,
+          "seconds": [
+            20.3
+          ]
+        },
+        {
+          "name": "data_agent.ask_data_agent",
+          "depth": 5,
+          "count": 2,
+          "seconds": [
+            9.9,
+            9.9
+          ]
+        },
+        {
+          "name": "evidence.review_table",
+          "depth": 5,
+          "count": 1,
+          "seconds": [
+            0.0
+          ]
+        },
+        {
+          "name": "execute_tool set_model_response",
+          "depth": 3,
+          "count": 1,
+          "seconds": [
+            0.0
+          ]
+        },
+        {
+          "name": "evidence.validate_numeric_output",
+          "depth": 0,
+          "count": 1,
+          "seconds": [
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "Q01",
+      "variant_label": "Data Agent・再利用",
+      "root_name": "workshop.request",
+      "total_seconds": 41.4,
+      "spans": [
+        {
+          "name": "catalog.fetch_definition",
+          "depth": 0,
+          "count": 1,
+          "seconds": [
+            8.0
+          ]
+        },
+        {
+          "name": "invocation",
+          "depth": 0,
+          "count": 1,
+          "seconds": [
+            32.9
+          ]
+        },
+        {
+          "name": "invoke_agent ec_root",
+          "depth": 1,
+          "count": 1,
+          "seconds": [
+            32.8
+          ]
+        },
+        {
+          "name": "call_llm",
+          "depth": 2,
+          "count": 2,
+          "seconds": [
+            22.6,
+            9.9
+          ]
+        },
+        {
+          "name": "generate_content gemini-3.8-flash",
+          "depth": 3,
+          "count": 2,
+          "seconds": [
+            12.2,
+            9.7
+          ]
+        },
+        {
+          "name": "execute_tool analyze_ec",
+          "depth": 3,
+          "count": 1,
+          "seconds": [
+            10.3
+          ]
+        },
+        {
+          "name": "evidence.two_consumers",
+          "depth": 4,
+          "count": 1,
+          "seconds": [
+            10.2
+          ]
+        },
+        {
+          "name": "data_agent.ask_data_agent",
+          "depth": 5,
+          "count": 1,
+          "seconds": [
+            10.0
+          ]
+        },
+        {
+          "name": "evidence.review_table",
+          "depth": 5,
+          "count": 1,
+          "seconds": [
+            0.0
+          ]
+        },
+        {
+          "name": "execute_tool set_model_response",
+          "depth": 3,
+          "count": 1,
+          "seconds": [
+            0.0
+          ]
+        },
+        {
+          "name": "evidence.validate_numeric_output",
+          "depth": 0,
+          "count": 1,
+          "seconds": [
+            0.0
+          ]
+        }
+      ]
+    }
+  ]
+}

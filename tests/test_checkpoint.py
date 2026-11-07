@@ -1,6 +1,8 @@
 """Guarded checkpoint tests: all cloud reads use an in-memory service."""
+import contextlib
 import copy
 import hashlib
+import io
 import json
 from pathlib import Path
 import shutil
@@ -249,7 +251,7 @@ class CheckpointTests(unittest.TestCase):
         p=cp.write_plan(self.root);before=self.scan();after=copy.deepcopy(before);after.update(ready=True,blocked=False)
         order=[]
         fields,body=concept(as_document(cp.standard_rules(self.root)))
-        with patch.object(cp,'diagnose',side_effect=[before,after]), patch.object(cp.subprocess,'run',side_effect=lambda command,**k:(self.assertEqual(command[-1],'lab2'),order.append('bigquery'))), patch.object(cp.Catalog,'sync',side_effect=lambda *a:order.append('catalog') or {'title':fields['title'],'body':body}), patch.object(cp.AgentClient,'ensure',side_effect=lambda *a:order.append('agent')), patch.object(cp.Observability,'enable',side_effect=lambda:order.append('observability')):
+        with patch.object(cp,'diagnose',side_effect=[before,after]), patch.object(cp.subprocess,'run',side_effect=lambda command,**k:(self.assertEqual(command[-1],'lab2'),order.append('bigquery'))), patch.object(cp.Catalog,'sync',side_effect=lambda *a:order.append('catalog') or {'title':fields['title'],'body':body}), patch.object(cp.AgentClient,'ensure',side_effect=lambda *a:order.append('agent')), patch.object(cp.Observability,'enable',side_effect=lambda *a,**k:order.append('observability')):
             self.assertTrue(cp.apply(self.root,p['plan_id'])['ready'])
         self.assertEqual(order,['bigquery','catalog','agent','observability'])
         self.assertTrue((self.root/'artifacts/observability/.lock').exists())
@@ -263,12 +265,15 @@ class CheckpointTests(unittest.TestCase):
         self.assertFalse(self.obspath.exists());self.assertTrue(self.scan()['ready'])
 
     def test_apply_records_failure_and_preserves_before_files(self):
-        self.own();self.put('participant/lab2.json',{'evidence_cache_enabled':False});p=cp.write_plan(self.root)
+        # 業務定義が #1 の雛形のまま → Catalog の保存定義で戻す。途中で失敗しても元のファイルは退避されている。
+        self.own();starter=(self.root/'semantics/lab1-starter.txt').read_text();self.put('participant/semantics.txt',starter)
+        p=cp.write_plan(self.root);self.assertEqual(p['local_writes'],{'participant/semantics.txt':self.doc})
         with patch.object(cp.Catalog,'sync',side_effect=cp.CloudError('controlled interruption')):
             with self.assertRaises(cp.CloudError):cp.apply(self.root,p['plan_id'])
-        folder=self.root/'artifacts/checkpoints'/p['plan_id']
-        self.assertEqual(cp.read(folder/'apply.json')['state'],'interrupted')
-        self.assertEqual(cp.read(folder/'before/participant/lab2.json'),{'evidence_cache_enabled':False})
+        folder=self.root/'artifacts/checkpoints'/p['plan_id'];journal=cp.read(folder/'apply.json')
+        self.assertEqual(journal['state'],'interrupted');self.assertEqual(journal['completed'],['verified_ledger_adoption','participant_files','bigquery'])
+        self.assertEqual((folder/'before/participant/semantics.txt').read_text(),starter)
+        self.assertEqual((self.root/'participant/semantics.txt').read_text(),self.doc)
         self.assertEqual(cp.read(self.root/'participant/lab2.json'),{'evidence_cache_enabled':True})
 
     def test_metadata_drift_warns_without_changing_ledgers(self):
@@ -427,5 +432,221 @@ class CheckpointTests(unittest.TestCase):
         self.assertIn(name,[x['resource_id'] for x in result['metadata_changes']])
         self.cloud[name]['createTime']='2026-09-03T00:00:00Z'
         with self.assertRaises(cp.CloudError):cp.restore_backup(self.root,path)
+
+    # --- lab2.json は開始の条件にしない ---
+
+    def test_lab2_options_do_not_gate_start_and_are_never_rewritten(self):
+        self.own();path=self.root/'participant/lab2.json'
+        for value in ({'evidence_cache_enabled':True},{'evidence_cache_enabled':False},None):
+            with self.subTest(value=value):
+                if value is None:path.unlink()
+                else:self.put('participant/lab2.json',value)
+                before=path.read_bytes() if path.exists() else None
+                r=self.scan();self.assertTrue(r['ready']);self.assertNotIn('participant/lab2.json',r['local_writes'])
+                self.assertEqual(before,path.read_bytes() if path.exists() else None)
+        for text in ('null','not json','{"evidence_cache_enabled":"yes"}','{"evidence_cache_enabled":true,"other":1}'):
+            with self.subTest(text=text):
+                self.put('participant/lab2.json',text);r=self.scan()
+                self.assertTrue(r['blocked']);self.assertEqual(next(i for i in r['items'] if i['resource_id']=='participant/lab2.json')['action'],'blocked')
+
+    def test_lab2_option_change_is_still_detected_and_backed_up(self):
+        self.own();self.put('participant/lab2.json',{'evidence_cache_enabled':False})
+        path=self.root/'backup.json';cp.backup(self.root,path)
+        self.assertEqual(json.loads(cp.read(path)['payload']['files']['participant/lab2.json']),{'evidence_cache_enabled':False})
+        first=self.scan();self.put('participant/lab2.json',{'evidence_cache_enabled':True})
+        self.assertNotEqual(first['signature'],self.scan()['signature'])
+
+    def test_pre_event_backup_with_reuse_off_restores_and_starts_unchanged(self):
+        self.own();self.put('participant/lab2.json',{'evidence_cache_enabled':False})
+        path=self.root/'backup.json';cp.backup(self.root,path)
+        shutil.rmtree(self.root/'artifacts');shutil.rmtree(self.root/'participant')
+        cp.restore_backup(self.root,path,True)
+        original=(self.root/'participant/lab2.json').read_bytes()
+        self.assertEqual(json.loads(original),{'evidence_cache_enabled':False})
+        code,out=self.start(assume_yes=True);self.assertEqual(code,0);self.assertIn('開始できます',out)
+        self.assertEqual(original,(self.root/'participant/lab2.json').read_bytes());self.assertEqual(self.plans(),[])
+
+    # --- start ---
+
+    def start(self,**kw):
+        out=io.StringIO()
+        kw.setdefault('interactive',False)
+        with contextlib.redirect_stdout(out):code=cp.start(self.root,**kw)
+        return code,out.getvalue()
+
+    def plans(self):
+        folder=self.root/'artifacts/checkpoints'
+        return sorted(p.name for p in folder.iterdir() if p.is_dir() and len(p.name)==16) if folder.is_dir() else []
+
+    def first_setup(self):
+        self.cloud={};fields,body=concept(self.doc);calls=[]
+        mocks=[patch.object(cp.subprocess,'run',side_effect=lambda command,**k:calls.append('bigquery')),
+               patch.object(cp.Catalog,'sync',side_effect=lambda *a:calls.append('catalog') or {'title':fields['title'],'body':body}),
+               patch.object(cp.AgentClient,'ensure',side_effect=lambda *a:calls.append('agent')),
+               patch.object(cp.Observability,'enable',side_effect=lambda *a,**k:calls.append('observability'))]
+        for m in mocks:m.start();self.addCleanup(m.stop)
+        return calls
+
+    def test_start_when_ready_changes_nothing_and_links_the_entry(self):
+        self.own();before={p:p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
+        code,out=self.start();self.assertEqual(code,0)
+        self.assertIn('開始できます',out);self.assertIn('dataplex/dp-entries/'+self.entry,out);self.assertNotIn('dp-search',out)
+        self.assertEqual(out.count('OK'),4);self.assertNotIn('ledger_refresh',out)
+        self.assertEqual(self.plans(),[]);self.assertTrue(all(m=='GET' for m,_ in self.calls))
+        after={p:p.read_bytes() for p in self.root.rglob('*') if p.is_file() and p.name!='diagnosis.json'}
+        self.assertEqual(before,after)
+
+    def test_start_hides_metadata_warning(self):
+        self.own();self.cloud[self.obsname]['updateTime']='2026-09-02T00:00:00Z'
+        code,out=self.start();self.assertEqual(code,0);self.assertNotIn('更新日時',out)
+        self.assertTrue(cp.read(self.root/'artifacts/checkpoints/diagnosis.json')['metadata_changes'])
+
+    def test_start_asks_before_creating(self):
+        calls=self.first_setup()
+        code,out=self.start(interactive=False);self.assertEqual(code,2);self.assertIn('何も変更していません',out)
+        code,out=self.start(interactive=True,ask=lambda prompt:'n');self.assertEqual(code,1);self.assertIn('何も変更していません',out)
+        code,out=self.start(interactive=True,ask=lambda prompt:(_ for _ in ()).throw(EOFError()));self.assertEqual(code,1)
+        self.assertEqual(calls,[]);self.assertEqual(self.plans(),[])
+        self.assertIn('これから作ります',out)
+        code,out=self.start(interactive=True,ask=lambda prompt:'y')
+        self.assertEqual(calls,['bigquery','catalog','agent','observability']);self.assertEqual(len(self.plans()),1)
+        self.assertIn('分析データ ……… 完了',out);self.assertIn('もう一度確かめています',out)
+        # 疑似クラウドは作成しても変わらないので、最後の診断は未完了のまま。開始できるとは表示しない。
+        self.assertEqual(code,2);self.assertIn('まだ開始できません',out);self.assertNotIn('開始できます。',out)
+
+    def test_start_reports_done_only_for_what_it_creates(self):
+        # 事前準備の後は分析データと実行の準備が OK。作るものだけに「完了」を出す。
+        out=io.StringIO()
+        with contextlib.redirect_stdout(out):
+            report=cp.progress({'definition','agent'})
+            for step in ('participant_files','bigquery','catalog','data_agent','observability'):report(step)
+        self.assertNotIn('分析データ',out.getvalue());self.assertNotIn('実行の準備',out.getvalue())
+        self.assertIn('業務定義 ……… 完了',out.getvalue());self.assertIn('分析エージェント ……… 完了',out.getvalue())
+        self.assertIn('もう一度確かめています',out.getvalue())
+
+    def test_start_links_the_agent_catalog(self):
+        self.own();code,out=self.start();self.assertEqual(code,0)
+        self.assertIn('agents_hub;caPath=%2Fbq2%2Fagents-catalog?project=',out)
+
+    def test_start_yes_skips_only_the_prompt(self):
+        calls=self.first_setup()
+        code,out=self.start(assume_yes=True,ask=lambda prompt:self.fail('must not ask'))
+        self.assertEqual(calls,['bigquery','catalog','agent','observability'])
+        plan=cp.load_plan(self.root,self.plans()[0])[1];diagnosis=cp.read(self.root/'artifacts/checkpoints'/plan['plan_id']/'after.json')
+        self.assertEqual(plan['signature'],self.scan()['signature']);self.assertTrue(diagnosis)
+
+    def test_start_stops_on_adopt_blocked_or_errors_even_with_yes(self):
+        cases={'adopt':lambda:None,'blocked':lambda:(self.own(),self.put('participant/semantics.txt','[[edited]]')),
+               'errors':lambda:self.own()}
+        for name,prepare in cases.items():
+            with self.subTest(name=name):
+                prepare();errors=patch.object(cp.Catalog,'get',side_effect=cp.CloudError('403 unavailable')) if name=='errors' else contextlib.nullcontext()
+                with errors, patch.object(cp,'apply') as applied:
+                    code,out=self.start(assume_yes=True)
+                self.assertEqual(code,2);applied.assert_not_called();self.assertEqual(self.plans(),[])
+                self.assertIn('何も変更していません。講師に声をかけてください',out)
+                self.assertIn({'adopt':'要相談','blocked':'要相談','errors':'確認できませんでした'}[name],out)
+
+    def test_start_stops_before_apply_when_state_changes_during_prompt(self):
+        for change in ('local','cloud'):
+            with self.subTest(change=change):
+                shutil.rmtree(self.root/'artifacts',ignore_errors=True);calls=self.first_setup()
+                def answer(prompt):
+                    if change=='local':self.put('participant/lab2.json',{'evidence_cache_enabled':False})
+                    else:self.cloud[self.base]={'location':'US','labels':cp.LABELS}
+                    return 'y'
+                code,out=self.start(interactive=True,ask=answer)
+                self.assertEqual(code,2);self.assertEqual(calls,[]);self.assertIn('作成を始める前に止まりました。何も変更していません',out)
+                self.assertFalse((self.root/'artifacts/checkpoints'/self.plans()[0]/'apply.json').exists())
+                self.put('participant/lab2.json',{'evidence_cache_enabled':True})
+
+    def test_start_reports_partial_failure_without_claiming_no_change(self):
+        calls=self.first_setup()
+        with patch.object(cp.Catalog,'sync',side_effect=cp.CloudError('controlled interruption')):
+            code,out=self.start(assume_yes=True)
+        self.assertEqual(code,2);self.assertEqual(calls,['bigquery'])
+        self.assertIn('作成の途中で止まりました',out);self.assertNotIn('何も変更していません',out)
+        self.assertIn('終わったもの：参加者ファイル、分析データ',out);self.assertIn('止まったところ：業務定義（エラー：controlled interruption）',out)
+
+    def test_start_groups_take_the_worst_state(self):
+        def result(items,errors=()):return {'items':items,'errors':list(errors)}
+        def item(kind,action,name='x'):return {'kind':kind,'action':action,'resource_id':name}
+        rows={r[0]:r[3] for r in cp.summarize(result([item('dataset','none'),item('table','create'),item('view','blocked'),
+            item('catalog_entry','update_owned_definition'),item('data_agent','none'),item('observability','use_existing_unowned')],
+            [{'resource_id':'ADK','error':'missing'}]))}
+        self.assertTrue(rows['data'].startswith('要相談'));self.assertTrue(rows['definition'].startswith('これから直します'))
+        self.assertEqual(rows['agent'],'OK');self.assertTrue(rows['setup'].startswith('確認できませんでした'))
+        rows={r[0]:r[3] for r in cp.summarize(result([item('file','complete_definition','participant/semantics.txt')],
+            [{'resource_id':self.base+'/tables/orders/rows','error':'x'}]))}
+        self.assertTrue(rows['definition'].startswith('これから作ります（標準の業務定義'));self.assertTrue(rows['setup'].startswith('確認できませんでした'))
+        self.assertTrue(rows['agent'].startswith('確かめていません'))
+
+    # --- 片付け後の同じ Project（削除済みの Agent と重ならない ID） ---
+
+    def deleted_original(self):
+        self.own();rec=cp.read(self.apath);rec.update(state='deleted',deleted_at='2026-10-31T00:00:00Z')
+        self.put(str(self.apath.relative_to(self.root)),rec)
+        self.cloud[self.aname].update(updateTime='2026-10-31T00:00:00Z',deleteTime='2026-10-31T00:00:00Z',purgeTime='2026-11-30T00:00:00Z')
+
+    def numbered(self,suffix='-r2',ledger=True,ctx=None):
+        name=self.aname+suffix;resource={k:v for k,v in copy.deepcopy(self.cloud[self.aname]).items() if k not in ('deleteTime','purgeTime')}
+        resource.update(name=name,createTime='2026-11-01T00:00:00Z',updateTime='2026-11-01T00:00:00Z')
+        if ctx is not None:resource['dataAnalyticsAgent']={'publishedContext':ctx}
+        self.cloud[name]=resource
+        if ledger:self.put(str(self.apath.with_name(self.aid+suffix+'.resource.json').relative_to(self.root)),{'name':name,'description':resource['description'],'state':'present','resource':resource})
+        return name
+
+    def agent_item(self,result):
+        return next(i for i in result['items'] if i['kind']=='data_agent')
+
+    def test_diagnosis_after_cleanup_plans_the_next_id_without_writing(self):
+        self.deleted_original();before=self.apath.read_bytes()
+        result=self.scan();item=self.agent_item(result)
+        self.assertEqual((item['resource_id'],item['action']),(self.aname+'-r2','create'))
+        self.assertIn(self.aname,result['cloud_snapshot']);self.assertEqual(result['adoptions'],{})
+        self.assertEqual(before,self.apath.read_bytes());self.assertFalse(self.apath.with_name(self.aid+'-r2.resource.json').exists())
+
+    def test_numbered_agent_is_ready_backed_up_restored_and_captured(self):
+        from workshop.provenance import capture
+        self.deleted_original();name=self.numbered()
+        result=self.scan();self.assertTrue(result['ready']);self.assertEqual(self.agent_item(result)['resource_id'],name)
+        only=self.root/'current-only.json';cp.backup(self.root,only,True);payload=cp.read(only)['payload']
+        r2=str(self.apath.with_name(self.aid+'-r2.resource.json').relative_to(self.root));base=str(self.apath.relative_to(self.root))
+        self.assertIn(r2,payload['files']);self.assertEqual(payload['excluded_agent_ledgers'],[base])
+        for key,value in self.cloud.items():
+            if '/tables/' in key:value.update(creationTime='1',lastModifiedTime='2')
+        self.assertEqual(capture(self.root)['content']['agent']['name'],name)
+        full=self.root/'backup.json';cp.backup(self.root,full);files=cp.read(full)['payload']['files']
+        self.assertIn(base,files);self.assertIn(r2,files)
+        shutil.rmtree(self.root/'artifacts');shutil.rmtree(self.root/'participant')
+        self.assertTrue(cp.restore_backup(self.root,full,True)['ready'])
+        for key,value in files.items():self.assertEqual((self.root/key).read_text(),value)
+        self.assertTrue(self.scan()['ready'])
+
+    def test_restore_refuses_a_deleted_ledger_whose_agent_is_usable(self):
+        self.deleted_original();self.numbered();path=self.root/'backup.json';cp.backup(self.root,path)
+        shutil.rmtree(self.root/'artifacts')
+        for key in ('deleteTime','purgeTime'):self.cloud[self.aname].pop(key)
+        with self.assertRaises(cp.CloudError):cp.restore_backup(self.root,path)
+        self.assertFalse(self.apath.exists())
+
+    def test_interrupted_creation_blocks_diagnosis_without_adoption(self):
+        self.deleted_original();name=self.numbered(ledger=False)
+        self.put(str(self.apath.with_name(self.aid+'-r2.resource.json').relative_to(self.root)),{'name':name,'state':'creation_requested'})
+        result=self.scan();item=self.agent_item(result)
+        self.assertEqual((item['resource_id'],item['action']),(name,'blocked'));self.assertIn('作成の途中',item['next'])
+        self.assertEqual(result['adoptions'],{})
+
+    def test_lost_ledger_offers_only_one_verified_candidate(self):
+        self.deleted_original();name=self.numbered()
+        for p in self.apath.parent.glob('*.resource.json'):p.unlink()
+        result=self.scan();self.assertEqual(self.agent_item(result)['action'],'adopt');self.assertEqual(list(result['adoptions']),[name])
+        self.numbered('-r3',ledger=False);result=self.scan()
+        self.assertEqual(self.agent_item(result)['action'],'blocked');self.assertEqual(result['adoptions'],{})
+
+    def test_lost_ledger_marker_alone_is_not_a_candidate(self):
+        self.deleted_original();other=copy.deepcopy(self.ctx);other['systemInstruction']+='\nchanged'
+        self.numbered(ledger=False,ctx=other);self.apath.unlink()
+        result=self.scan();self.assertEqual(self.agent_item(result)['action'],'blocked');self.assertEqual(result['adoptions'],{})
 
 if __name__=='__main__':unittest.main()

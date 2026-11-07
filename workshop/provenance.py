@@ -34,9 +34,13 @@ def capture(root,account=None):
         rules=(root/'participant/semantics.txt').read_text()
         if '[[' in rules or ']]' in rules:raise ValueError('Complete the workshop definition first')
         fields,body=concept(as_document(rules));ctx=make_contexts(cfg,rules,{'title':fields['title'],'body':body})['view']
-        client=AgentClient(cfg,account);name=client.parent+'/dataAgents/ec-poc-view-'+fingerprint(ctx)
-        resource=client.request('GET',client.base+name,missing_ok=True)
-        if resource is None:raise CloudError('Data Agent absent')
+        client=AgentClient(cfg,account);client.folder=root/'artifacts/data-agent'/cfg['project_id']/cfg['dataset_id']/cfg['data_agent_location']
+        # 確定した名前（削除済みと重ならない ID）を prepare と同じ規則で選ぶ。作らない。
+        # 台帳がなく使える候補が 1 つだけのときは、今までどおりその Agent の内容を記録する。
+        d=client.resolve('view',ctx)
+        if d['action']=='create':raise CloudError('Data Agent absent')
+        if d['action']=='stop' and d['reason']!='ledger_missing':raise CloudError(d['message'])
+        name,resource=d['name'],d['actual']
         validate_published(resource,'workshop_cli:summit_ec_v1:'+fingerprint(ctx),ctx,name)
         agent={'name':name,'published_context':published_context(resource),'resource_sha256':sha(stable(resource))}
         metadata={k:resource[k] for k in ('updateTime','etag') if k in resource}

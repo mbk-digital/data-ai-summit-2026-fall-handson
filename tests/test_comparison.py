@@ -23,7 +23,13 @@ class ComparisonTests(unittest.TestCase):
                ('SELECT `A` AS n FROM t','SELECT `a` AS n FROM t'),
                ('SELECT CAST(x AS MyEnum) AS n FROM t','SELECT CAST(x AS myenum) AS n FROM t'),
                ('SELECT AS MyType x FROM t','SELECT AS mytype x FROM t'),
-               ('SELECT x AS N FROM t GROUP BY N','SELECT x AS n FROM t GROUP BY n'),
+               ('SELECT x AS a FROM t GROUP BY N','SELECT x AS a FROM t GROUP BY n'),
+               ('SELECT x AS N FROM t WHERE N > 1','SELECT x AS n FROM t WHERE n > 1'),
+               ('SELECT SUM(x) AS N FROM t HAVING N > 1','SELECT SUM(x) AS n FROM t HAVING n > 1'),
+               ('SELECT x AS N FROM t GROUP BY t.N','SELECT x AS n FROM t GROUP BY t.n'),
+               ('SELECT x AS N FROM t ORDER BY N + 1','SELECT x AS n FROM t ORDER BY n + 1'),
+               ('SELECT x AS N FROM t GROUP BY f(N)','SELECT x AS n FROM t GROUP BY f(n)'),
+               ('SELECT DATE_TRUNC(d, MONTH) AS month FROM t','SELECT DATE_TRUNC(d, month) AS month FROM t'),
                ('WITH c AS (SELECT 1 AS X) SELECT X FROM c','WITH c AS (SELECT 1 AS x) SELECT X FROM c'),
                ('SELECT (SELECT 1 AS N) FROM t','SELECT (SELECT 1 AS n) FROM t'),
                ('SELECT x AS N /* note */ FROM t','SELECT x AS n /* note */ FROM t'),
@@ -32,6 +38,34 @@ class ComparisonTests(unittest.TestCase):
                ('SELECT x AS N FROM t; SELECT 2','SELECT x AS n FROM t; SELECT 2')]
         for a,b in pairs:
             with self.subTest(a=a):self.assertEqual(e.compare_sql(a,b)['method'],'unmatched')
+
+    def test_group_by_and_order_by_alias_references_match_as_an_estimate(self):
+        reported="""SELECT campaign_id,
+       DATE_TRUNC(event_date, MONTH) AS MONTH,
+       SUM(gross_profit_jpy) AS gross_profit_jpy
+FROM `p.d.t`
+GROUP BY campaign_id,
+         MONTH
+ORDER BY MONTH DESC,
+         campaign_id"""
+        job="""SELECT
+  campaign_id,
+  DATE_TRUNC(event_date, MONTH) AS month,
+  SUM(gross_profit_jpy) AS gross_profit_jpy
+FROM
+  `p.d.t`
+GROUP BY
+  campaign_id,
+  month
+ORDER BY
+  month DESC, campaign_id
+"""
+        result=e.compare_sql(reported,job)
+        self.assertEqual(result['method'],'select_alias_case_estimate')
+        self.assertEqual([(c['expected'],c['actual']) for c in result['changes']],[('MONTH','month')]*3)
+        self.assertTrue(e.match_sql_queries([reported],[job])['complete'])
+        self.assertEqual(e.compare_sql(reported,job,False)['method'],'unmatched')
+        self.assertFalse(e.match_sql_queries([reported],[job.replace('  month DESC','  month ASC')])['complete'])
 
     def test_alias_candidates_are_not_chosen_when_ambiguous(self):
         expected=['SELECT 1 AS Aa','SELECT 1 AS aA']

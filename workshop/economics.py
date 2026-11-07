@@ -191,11 +191,28 @@ def sql_key(sql):
     return tuple(re.findall(pattern, sql))
 
 
-def select_alias_key(sql):
-    """Fold only explicit top-level SELECT-list aliases in a single SELECT.
+def fold_alias_references(tokens,upper,output,aliases):
+    """Fold a whole top-level GROUP BY/ORDER BY item that names a SELECT-list alias.
 
-    No CAST types, table aliases, alias references, CTEs, nested SELECTs,
-    comments, quoted names, or additional statements are normalized.
+    GoogleSQL column aliases are case-insensitive, so the spelling cannot change the result.
+    Qualified names, expressions, function arguments, HAVING and WHERE are left as written.
+    """
+    depth=0;active=False
+    for i,t in enumerate(tokens):
+        if t in ('(', '['):depth+=1
+        elif t in (')', ']'):depth-=1
+        if depth:continue
+        if upper[i] in ('GROUP','ORDER') and upper[i+1:i+2]==['BY']:active=True;continue
+        if upper[i] in ('HAVING','QUALIFY','WINDOW','LIMIT','OFFSET'):active=False
+        whole_item=(tokens[i-1]==',' or upper[i-1]=='BY') and (i+1==len(tokens) or tokens[i+1]==',' or upper[i+1] in ('ASC','DESC','NULLS','HAVING','QUALIFY','WINDOW','ORDER','LIMIT','OFFSET'))
+        if active and whole_item and t.lower() in aliases:output[i]=t.lower()
+
+
+def select_alias_key(sql):
+    """Fold explicit top-level SELECT-list aliases and their whole-item references in a single SELECT.
+
+    No CAST types, table aliases, CTEs, nested SELECTs, comments, quoted names,
+    or additional statements are normalized.
     """
     tokens=sql_key(sql)
     if not tokens or tokens[0].upper()!='SELECT':return None
@@ -203,7 +220,7 @@ def select_alias_key(sql):
     if upper.count('SELECT')!=1 or any(t in ('WITH','UNION','INTERSECT','EXCEPT',';','|>') for t in upper):return None
     if any(t.startswith(('--','/*')) or "'"*3 in t or '"'*3 in t for t in tokens):return None
     if len(tokens)>1 and upper[1]=='AS':return None  # SELECT AS STRUCT/VALUE/type
-    output=list(tokens);stack=[];in_list=True
+    output=list(tokens);stack=[];in_list=True;aliases=set()
     for i,t in enumerate(tokens):
         if t in ('(', '['):stack.append(t)
         elif t in (')', ']'):
@@ -213,8 +230,10 @@ def select_alias_key(sql):
             if in_list and upper[i]=='AS' and i>1 and tokens[i-1]!='.':
                 if i+1>=len(tokens) or not re.fullmatch('[A-Za-z_][A-Za-z_0-9]*',tokens[i+1]):return None
                 if i+2<len(tokens) and tokens[i+2]!=',' and upper[i+2]!='FROM':return None
-                output[i+1]=tokens[i+1].lower()
-    return tuple(output) if not stack else None
+                output[i+1]=tokens[i+1].lower();aliases.add(output[i+1])
+    if stack:return None
+    fold_alias_references(tokens,upper,output,aliases)
+    return tuple(output)
 
 
 def compare_sql(expected,actual,allow_alias=True):
@@ -241,7 +260,7 @@ def match_sql_queries(expected,actual,allow_alias=True):
             unmatched.append({'actual_index':j,'reason':'ambiguous_alias_candidates' if chosen else 'no_match'});continue
         i,proof=chosen[0];covered.add(i);matches.append({'actual_index':j,'expected_index':i,**proof})
     missing=sorted(set(unique.values())-covered)
-    return {'version':'sql-format-and-select-alias-v1','complete':bool(expected and actual) and not unmatched and not missing,
+    return {'version':'sql-format-and-select-alias-v2','complete':bool(expected and actual) and not unmatched and not missing,
             'matches':matches,'unmatched_actual':unmatched,'unmatched_expected':missing}
 
 

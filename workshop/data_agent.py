@@ -28,6 +28,28 @@ DISPLAY_NAMES = {"raw": "EC分析 ① 業務定義なし", "defined": "EC分析 
                  "view": "EC分析 ③ 業務定義あり＋集計View"}
 
 
+# 削除した Agent は 30 日間同じ ID で残る。その ID と衝突したときだけ次の番号を使う
+# （docs/maintainers/drafts/deleted-agent-reuse.md）。元の ID を最優先にする。
+CANDIDATES = 5
+AGENT_ID = re.compile(r"ec-poc-(?:raw|defined|view)-[0-9a-f]{16}(?:-r[2-5])?")
+
+
+def candidate_ids(variant, digest):
+    base = "ec-poc-%s-%s" % (variant, digest)
+    return [base] + ["%s-r%d" % (base, number) for number in range(2, CANDIDATES + 1)]
+
+
+def deletion_state(resource):
+    """Only a non-empty deleteTime marks a deleted agent (seen on get, 2026-10-31)."""
+    if resource is None:
+        return "absent"
+    delete_time = resource.get("deleteTime")
+    if isinstance(delete_time, str) and delete_time:
+        return "deleted"
+    # Any other shape of the deletion fields is not one we have seen; never guess.
+    return "unknown" if "deleteTime" in resource or "purgeTime" in resource else "usable"
+
+
 def context(cfg, variant):
     if variant not in VARIANTS:
         raise ValueError("Unknown variant")
@@ -98,33 +120,111 @@ class AgentClient(Client):
         self.base = "https://" + HOSTS[location] + "/v1/"
         self.folder = ROOT / "artifacts/data-agent" / self.project / cfg["dataset_id"] / location
 
-    def ensure(self, variant, ctx=None):
+    def resolve(self, variant, ctx=None, ledger=None, get=None):
+        """Choose the agent ID for this definition. Reads only; never creates or edits ledgers.
+
+        ledger(path) returns the ledger text or None, get(name) the agent or None (404).
+        Returns action reuse / create / stop, with the reason and a message for a stop.
+        """
         if variant not in VARIANTS:
             raise ValueError("Unknown variant")
         ctx = context(self.cfg, variant) if ctx is None else ctx
+        ledger = ledger or (lambda path: path.read_text() if path.is_file() else None)
+        get = get or (lambda name: self.request("GET", self.base + name, missing_ok=True))
         digest = fingerprint(ctx)
-        agent_id = "ec-poc-%s-%s" % (variant, digest)
-        name = self.parent + "/dataAgents/" + agent_id
         marker = "workshop_cli:summit_ec_v1:" + digest
-        payload = {"name": name, "displayName": DISPLAY_NAMES[variant], "description": marker,
-                   "dataAnalyticsAgent": {"publishedContext": ctx}}
-        path = self.folder / (agent_id + ".resource.json")
-        existing = self.request("GET", self.base + name, missing_ok=True)
-        if existing is not None:
-            validate_published(existing,marker,ctx,name)
-            record=json.loads(path.read_text()) if path.is_file() else {}
-            if record.get('state')!='present' or record.get('name')!=name or record.get('description')!=marker or not equivalent(record.get('resource'),existing):
-                raise CloudError('Agent台帳の不足・内容または識別情報の不一致。Checkpointで診断してください: '+name)
+        ids = candidate_ids(variant, digest)
+        names = [self.parent + "/dataAgents/" + agent_id for agent_id in ids]
+        paths = [self.folder / (agent_id + ".resource.json") for agent_id in ids]
+        records = []
+        for path in paths:
+            text = ledger(path)
+            records.append(None if text is None else json.loads(text))
+        result = {"variant": variant, "marker": marker, "context": ctx, "probed": {}, "usable": []}
+
+        def decide(index, action, reason="", message="", actual=None):
+            result.update(action=action, reason=reason, message=message, agent_id=ids[index], name=names[index],
+                          path=paths[index], record=records[index], actual=actual)
+            return result
+
+        def matches(actual):
+            try:
+                validate_published(actual, marker, ctx, actual.get("name", ""))
+                return True
+            except CloudError:
+                return False
+
+        # A ledger that is not "deleted" pins the ID: never move on or create while it exists.
+        active = [i for i, record in enumerate(records) if record is not None and record.get("state") != "deleted"]
+        if len(active) > 1:
+            return decide(active[0], "stop", "multiple_ledgers", "Agent台帳が複数あります。変更せず停止しました。Checkpointで診断してください: "
+                          + ", ".join(names[i] for i in active))
+        if active:
+            i = active[0]
+            record = records[i]
+            actual = get(names[i])
+            result["probed"][names[i]] = actual
+            state = deletion_state(actual)
+            if state == "usable":
+                result["usable"].append(names[i])
+            if record.get("state") == "creation_requested":
+                return decide(i, "stop", "creation_unconfirmed", "作成の途中で止まったAgentの記録があります。新しく作らずに停止しました。Checkpointで確認してください: " + names[i], actual)
+            if state == "absent":
+                return decide(i, "stop", "recorded_missing", "記録済みAgentが見つかりません。Checkpointで確認してください: " + names[i], actual)
+            if state == "deleted":
+                return decide(i, "stop", "recorded_deleted", "記録済みAgentが教材の片付け以外で削除されています。台帳は変更せず停止しました。講師に相談してください: " + names[i], actual)
+            if state == "unknown":
+                return decide(i, "stop", "unknown_shape", "Agentの削除状態を判定できません。変更せず停止しました: " + names[i], actual)
+            if not matches(actual):
+                return decide(i, "stop", "changed", "Existing Agent changed; refusing to overwrite: " + names[i], actual)
+            if record.get("state") != "present" or record.get("name") != names[i] or record.get("description") != marker or not equivalent(record.get("resource"), actual):
+                return decide(i, "stop", "ledger_mismatch", "Agent台帳の不足・内容または識別情報の不一致。Checkpointで診断してください: " + names[i], actual)
+            return decide(i, "reuse", actual=actual)
+        # No pinned ledger (first run, after the cleanup, or a lost ledger): look at every candidate.
+        states = []
+        for name in names:
+            actual = get(name)
+            result["probed"][name] = actual
+            states.append(deletion_state(actual))
+        result["usable"] = [names[i] for i, state in enumerate(states) if state == "usable"]
+        if "unknown" in states:
+            i = states.index("unknown")
+            return decide(i, "stop", "unknown_shape", "Agentの削除状態を判定できません。変更せず停止しました: " + names[i], result["probed"][names[i]])
+        live = [i for i, state in enumerate(states) if state == "usable"]
+        if len(live) > 1:
+            return decide(live[0], "stop", "multiple_live", "台帳のないAgentが複数あります。変更せず停止しました。バックアップを復元するか、Checkpointで診断してください: "
+                          + ", ".join(names[i] for i in live), result["probed"][names[live[0]]])
+        if live:
+            i = live[0]
+            actual = result["probed"][names[i]]
+            if records[i] is not None:
+                return decide(i, "stop", "deleted_ledger_but_usable", "Agent台帳では削除済みですが、Agentが使える状態です。変更せず停止しました。Checkpointで診断してください: " + names[i], actual)
+            if not matches(actual):
+                return decide(i, "stop", "changed", "Existing Agent changed; refusing to overwrite: " + names[i], actual)
+            # Lost ledger: only Checkpoint may offer to rebuild it, with explicit approval.
+            result["adoptable"] = True
+            return decide(i, "stop", "ledger_missing", "Agent台帳の不足・内容または識別情報の不一致。Checkpointで診断してください: " + names[i], actual)
+        free = [i for i, state in enumerate(states) if state == "absent"]
+        if not free:
+            return decide(0, "stop", "limit", "削除済みのAgentと重ならないIDが残っていません（候補%d個）。新しいProjectで準備するか、削除から30日後にやり直してください: %s" % (CANDIDATES, names[0]))
+        return decide(free[0], "create")
+
+    def ensure(self, variant, ctx=None):
+        decision = self.resolve(variant, ctx)
+        name, path, ctx = decision["name"], decision["path"], decision["context"]
+        if decision["action"] == "stop":
+            raise CloudError(decision["message"])
+        if decision["action"] == "reuse":
             # Reuse must not silently refresh the ownership snapshot.
             self.last_created = False
             return name
-        else:
-            if path.is_file() and json.loads(path.read_text()).get("state") != "deleted":
-                raise CloudError("記録済みAgentが見つかりません。Checkpointで確認してください: " + name)
-            save(path, {"name": name, "description": marker, "state": "creation_requested", "requested_at": timestamp()})
-            existing = self.request("POST", self.base + self.parent + "/dataAgents:createSync?dataAgentId=" + agent_id, payload)
+        marker = decision["marker"]
+        payload = {"name": name, "displayName": DISPLAY_NAMES[variant], "description": marker,
+                   "dataAnalyticsAgent": {"publishedContext": ctx}}
+        save(path, {"name": name, "description": marker, "state": "creation_requested", "requested_at": timestamp()})
+        existing = self.request("POST", self.base + self.parent + "/dataAgents:createSync?dataAgentId=" + decision["agent_id"], payload)
         save(path, {"name": name, "description": marker, "state": "present", "checked_at": timestamp(), "resource": existing})
-        save(self.folder / (agent_id + ".config.json"), payload)
+        save(self.folder / (decision["agent_id"] + ".config.json"), payload)
         self.last_created = True
         return name
 
@@ -164,8 +264,8 @@ class AgentClient(Client):
             if record.get("state") == "deleted":
                 continue
             name = record.get("name", "")
-            expected_prefix = self.parent + "/dataAgents/ec-poc-"
-            if not name.startswith(expected_prefix) or not re.fullmatch(r"(?:raw|defined|view)-[0-9a-f]{16}", name[len(expected_prefix):]):
+            expected_prefix = self.parent + "/dataAgents/"
+            if not name.startswith(expected_prefix) or not AGENT_ID.fullmatch(name[len(expected_prefix):]):
                 raise CloudError("Invalid resource inventory: " + str(path))
             existing = self.request("GET", self.base + name, missing_ok=True)
             if existing is None:
