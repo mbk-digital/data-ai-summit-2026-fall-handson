@@ -276,5 +276,86 @@ class BenchmarkViewTests(unittest.TestCase):
         self.assertIn('処理時間は比べられません', text); self.assertNotIn(' 秒', text)
         self.assertNotIn('同じ質問 0 問', text)
 
+    # --- 自動チェックの理由 ---
+
+    def q04_off(self, p):
+        return next(i for i, t in enumerate(p['trials']) if t['case_id'] == 'Q04' and t['variant'].endswith('-off'))
+
+    def test_period_text_reads_months_and_ranges(self):
+        self.assertEqual(v.period_text({'start': '2026-07-01', 'end_exclusive': '2026-08-01'}), '2026年7月')
+        self.assertEqual(v.period_text({'start': '2026-07-01', 'end_exclusive': '2026-09-01'}), '2026年7月〜8月')
+        self.assertEqual(v.period_text({'start': '2026-07-03', 'end_exclusive': '2026-07-21'}), '2026-07-03〜2026-07-20')
+        self.assertEqual(v.period_text(None), '空')
+
+    def test_comparison_period_mismatch_names_the_item_and_what_matched(self):
+        p = self.summit(); self.all_trials(p, amount=0.1)
+        i = self.q04_off(p); answer = json.loads(json.dumps(p['cases']['Q04']['expected']))
+        answer['comparison_period'] = {'start': '2026-07-01', 'end_exclusive': '2026-09-01'}
+        self.save_trial(p, i, answer=answer, amount=0.1)
+        result = b.report(self.root, p['batch_id'])
+        row = next(t for t in result['trials'] if t['run_id'] == p['trials'][i]['run_id'])
+        self.assertEqual(row['errors'], ['comparison_period_mismatch'])
+        x = v.check_explanation(row)
+        self.assertEqual(x['short'], ['比較期間']); self.assertTrue(x['answer_issue'])
+        self.assertIn('基準：2026年7月／この回：2026年7月〜8月', x['problems'][0])
+        self.assertIn('数字と単位', x['matched']); self.assertIn('カテゴリなど', x['matched']); self.assertNotIn('比較期間', x['matched'])
+        html = render(result)
+        outside = re.sub(r'<details>.*?</details>', '', html, flags=re.S)
+        self.assertIn('参加者の採点ではありません', outside); self.assertIn('不一致：比較期間', outside)
+        self.assertIn('基準：2026年7月／この回：2026年7月〜8月', outside); self.assertIn('参加者の操作ミスではありません', outside)
+        self.assertIn('詳しい結果・自動チェックの理由', html); self.assertNotIn('不合格', html); self.assertNotIn('講師用の詳しい記録', html)
+        text = '\n'.join(v.summary_lines(result, 'collect'))
+        self.assertIn('自動チェックで基準と違った回：Q04・毎回取得（比較期間）', text)
+
+    def test_changed_conditions_are_not_called_an_answer_problem(self):
+        p = self.summit(); self.all_trials(p, amount=0.1)
+        i = self.q04_off(p); folder = self.root/'artifacts/lab2'/p['trials'][i]['run_id']
+        run = json.loads((folder/'run.json').read_text(encoding='utf-8')); run['source_sha256'] = {}
+        b.atomic_save(folder/'run.json', run)
+        result = b.report(self.root, p['batch_id'])
+        row = next(t for t in result['trials'] if t['run_id'] == p['trials'][i]['run_id'])
+        x = v.check_explanation(row)
+        self.assertTrue(x['system']); self.assertFalse(x['answer_issue']); self.assertEqual(x['matched'], [])
+        outside = re.sub(r'<details>.*?</details>', '', render(result), flags=re.S)
+        self.assertIn('記録と計画が不一致', outside); self.assertIn('保存された実行記録が、評価計画の質問や設定と一致しません', outside)
+        self.assertNotIn('教材のファイルや設定が変わって', outside)
+        self.assertNotIn('参加者の操作ミスではありません', outside)
+
+    def test_matching_answers_name_only_the_checked_items(self):
+        p = self.summit(); self.all_trials(p, amount=0.1)
+        rows = b.report(self.root, p['batch_id'])['trials']
+        q01 = v.check_explanation(next(t for t in rows if t['case_id'] == 'Q01'))
+        self.assertNotIn('比較期間', q01['matched']); self.assertNotIn('保留の理由', q01['matched']); self.assertIn('数字と単位', q01['matched'])
+        q08 = v.check_explanation(next(t for t in rows if t['case_id'] == 'Q08'))
+        self.assertIn('保留の理由', q08['matched']); self.assertNotIn('数字と単位', q08['matched'])
+        self.assertEqual(v.mismatch_lines(b.report(self.root, p['batch_id'])), [])
+
+    def test_reports_saved_before_the_update_get_the_expected_answer_from_the_plan(self):
+        from workshop.benchmark_report import page
+        p = self.summit(); self.all_trials(p, amount=0.1)
+        i = self.q04_off(p); answer = json.loads(json.dumps(p['cases']['Q04']['expected']))
+        answer['comparison_period'] = {'start': '2026-07-01', 'end_exclusive': '2026-09-01'}
+        self.save_trial(p, i, answer=answer, amount=0.1)
+        result = b.report(self.root, p['batch_id'])
+        for t in result['trials']: t.pop('expected')
+        old = json.loads(json.dumps(result))
+        x = v.check_explanation(next(t for t in old['trials'] if t['run_id'] == p['trials'][i]['run_id']))
+        self.assertEqual(x['matched'], []); self.assertNotIn('基準：', x['problems'][0]); self.assertIn('この回：2026年7月〜8月', x['problems'][0])
+        b.atomic_save(self.root/'artifacts/benchmarks'/p['batch_id']/'report.json', old)
+        html = page(self.root, p['context']['config'], p['batch_id'])
+        self.assertIn('基準：2026年7月／この回：2026年7月〜8月', html); self.assertNotIn('基準：空', html)
+        self.assertIn('数字と単位', html)
+        # 集計に使った計画と違う（ハッシュ不一致・欠落）ときは補わず、基準不明として出す
+        folder = self.root/'artifacts/benchmarks'/p['batch_id']
+        for change in ('plan', 'hash'):
+            with self.subTest(change=change):
+                saved = json.loads(json.dumps(old))
+                if change == 'hash': saved.pop('plan_sha256')
+                else: saved['plan_sha256'] = '0' * 64
+                b.atomic_save(folder/'report.json', saved)
+                html = page(self.root, p['context']['config'], p['batch_id'])
+                self.assertIn('（この回：2026年7月〜8月）', html); self.assertNotIn('基準：', html)
+                self.assertNotIn('照らして基準と一致した項目', html)
+
 if __name__ == '__main__':
     unittest.main()

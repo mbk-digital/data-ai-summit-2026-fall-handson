@@ -369,7 +369,7 @@ def report(root, ident):
         missing_components=sum(c.get('reference_usd') is None for c in measurement['components'].values()) if measurement and identity else 3
         source_pass=provenance['status'] in ('matched_estimate','matched_alias_estimate','matched_direct','not_required_for_abstention')
         rows.append({'run_id':trial['run_id'],'trace_console_url':run.get('trace_console_url'),'case_id':trial['case_id'],'variant':trial['variant'],'variant_label':label_of(value,trial['variant']),'repetition':trial['repetition'],
-            'question_class':case['question_class'],'question':trial['question'],'attempt_state':attempt['state'],
+            'question_class':case['question_class'],'question':trial['question'],'expected':case['expected'],'attempt_state':attempt['state'],
             'outcome':result,'root_status':run.get('answer',{}).get('status'),'structured_success':not errors,'errors':errors,
             'reviewer_scope':review_scope,'official_review':None,'provenance':provenance,'human_review':manual['decision'] if manual else 'pending',
             'verified_success':not errors and source_pass and bool(manual and manual['decision']=='pass'),

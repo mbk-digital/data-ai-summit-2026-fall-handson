@@ -98,6 +98,114 @@ def group_cost(group, rows):
     return '未算出（' + str(len(missing)) + ' 回分）'
 
 
+# --- 自動チェックの理由 ---------------------------------------------------------
+# 判定は benchmark.report（evaluation.check_answer）のまま。ここでは理由を参加者が読める言葉にするだけ。
+SYSTEM_ERRORS = {
+    'run_identity_or_frozen_config_mismatch': '保存された実行記録が、評価計画の質問や設定と一致しません。講師に声をかけてください。',
+    'execution_not_completed': '実行が最後まで終わっていません。',
+    'root_execution_not_completed': '実行が最後まで終わっていません。',
+}
+STATUS_TEXT = {'OK': '答える', 'INSUFFICIENT_DATA': '判断を保留', 'ERROR': 'エラー'}
+
+
+def period_text(value):
+    """{'start','end_exclusive'} を「2026年7月」「2026年7月〜8月」「2026-07-03〜2026-07-20」の形に。"""
+    import datetime as dt
+    if not isinstance(value, dict):
+        return '空'
+    try:
+        start = dt.date.fromisoformat(value['start']); end = dt.date.fromisoformat(value['end_exclusive'])
+    except (KeyError, TypeError, ValueError):
+        return '形式が不正'
+    last = end - dt.timedelta(days=1)
+    if start.day == 1 and end.day == 1 and last >= start:
+        if (start.year, start.month) == (last.year, last.month):
+            return f'{start.year}年{start.month}月'
+        if start.year == last.year:
+            return f'{start.year}年{start.month}月〜{last.month}月'
+        return f'{start.year}年{start.month}月〜{last.year}年{last.month}月'
+    return f'{start.isoformat()}〜{last.isoformat()}'
+
+
+def check_explanation(row):
+    """1 回分の自動チェックを、照らした項目・基準と違った項目・理由の文にする。
+
+    matched は実際に照らして一致した項目だけ。answer_issue は回答の中身の不一致だけのとき True
+    （実行条件の食い違いや未完了には「操作ミスではない」と言わない）。
+    """
+    errors = list(row.get('errors') or [])
+    answer = row.get('answer') if isinstance(row.get('answer'), dict) else None
+    expected = row.get('expected') or {}
+    # 古いコードで保存した集計には基準がない。そのときは基準の値も「一致した項目」も出さない。
+    known = bool(expected)
+    def versus(want, got):
+        return '（' + ('基準：' + want + '／' if known else '') + 'この回：' + got + '）'
+    system = [SYSTEM_ERRORS[e] for e in errors if e in SYSTEM_ERRORS]
+    content = [e for e in errors if e not in SYSTEM_ERRORS]
+    problems, short = [], []
+    def add(name, text):
+        if text not in problems:
+            problems.append(text); short.append(name)
+    measures = [e for e in content if ':' in e or e in ('invalid_measures', 'measure_keys_mismatch')]
+    for e in content:
+        if e == 'missing_answer':
+            add('回答のデータ', '回答のデータがありません。')
+        elif e == 'status_mismatch':
+            add('回答の種類', '答えるか判断を保留するかが、基準と違います' + versus(STATUS_TEXT.get(expected.get('status'), '不明'), STATUS_TEXT.get((answer or {}).get('status'), '不明')) + '。')
+        elif e == 'question_class_outcome_mismatch':
+            if 'status_mismatch' not in content:
+                add('回答の種類', '答えるか判断を保留するかが、基準と違います。')
+        elif e == 'period_mismatch':
+            add('対象期間', '対象期間が基準と違います' + versus(period_text(expected.get('period')), period_text((answer or {}).get('period'))) + '。')
+        elif e == 'comparison_period_mismatch':
+            add('比較期間', '比較期間が基準と違います' + versus(period_text(expected.get('comparison_period')), period_text((answer or {}).get('comparison_period'))) + '。')
+        elif e == 'dimensions_mismatch':
+            got = (answer or {}).get('dimensions')
+            got = '、'.join(str(v) for v in got.values()) if isinstance(got, dict) and got else '空'
+            add('カテゴリなど', 'カテゴリなどの答えが基準と違います' + versus('、'.join(str(v) for v in expected.get('dimensions', {}).values()) or '空', got) + '。')
+        elif e == 'reason_code_mismatch':
+            add('保留の理由', '判断を保留した理由が基準と違います。')
+        elif e == 'definition_version_mismatch':
+            add('業務定義の版', '業務定義の版が基準と違います。')
+        elif e == 'missing_customer_message':
+            add('回答文', '回答文がありません。')
+        elif e.endswith(':value_mismatch'):
+            name = e.split(':')[0]
+            want = (expected.get('measures', {}).get(name) or {}).get('value')
+            got = (((answer or {}).get('measures') or {}).get(name) or {}).get('value')
+            add('数字', '数字が基準と違います（基準：' + format(want, ',') + '／この回：' + (format(got, ',') if isinstance(got, (int, float)) else '空') + '）。' if isinstance(want, (int, float)) else '数字が基準と違います。')
+        elif e.endswith(':unit_mismatch'):
+            add('単位', '数字の単位が基準と違います。')
+        elif e in measures:
+            add('数字', '答えた数字の項目が基準と違います。')
+        else:
+            add('そのほか', 'そのほかの項目が基準と違います（' + e + '）。')
+    matched = []
+    if answer is not None and not system and known:
+        checks = [('回答の種類', {'status_mismatch', 'question_class_outcome_mismatch'}, True),
+                  ('対象期間', {'period_mismatch'}, True),
+                  ('比較期間', {'comparison_period_mismatch'}, 'comparison_period' in expected),
+                  ('カテゴリなど', {'dimensions_mismatch'}, bool(expected.get('dimensions'))),
+                  ('数字と単位', set(measures), bool(expected.get('measures'))),
+                  ('保留の理由', {'reason_code_mismatch'}, expected.get('status') == 'INSUFFICIENT_DATA')]
+        matched = [name for name, codes, applies in checks if applies and not (codes & set(content))]
+    return {'matched': matched, 'problems': problems, 'short': short, 'system': system,
+            'answer_issue': bool(problems) and not system}
+
+
+def mismatch_lines(result):
+    """run・collect の表の下。基準と違った回と、その項目の名前だけを出す。"""
+    names = []
+    for t in result['trials']:
+        if t.get('attempt_state') not in ('completed', 'recovered') or t.get('structured_success'):
+            continue
+        x = check_explanation(t)
+        names.append(t['case_id'] + '・' + t['variant_label'].replace('Data Agent・', '') + '（' + '、'.join(x['short'] or ['記録と計画']) + '）')
+    if not names:
+        return []
+    return ['自動チェックで基準と違った回：' + '、'.join(names) + '。参加者の採点ではなく、AI の出力を教材の基準と照らした結果です。理由は比べる画面で確かめられます。']
+
+
 def timing_note(result):
     timing = result.get('timing_comparison') or {}
     if timing.get('status') != 'complete':
@@ -130,6 +238,7 @@ def summary_lines(result, stage):
             cells += pad(group_cost(g, rows_of[g['variant']]), 30)
         lines.append(cells + ('—' if seconds is None else f'{seconds:.1f} 秒'))
     lines.append('')
+    lines += mismatch_lines(result)
     note = timing_note(result)
     if note:
         lines.append(note)
@@ -244,14 +353,14 @@ def example_markdown(record):
            '', '評価計画 `' + record['batch_id'] + '`（日本時間 ' + jst(record.get('created_at')) + ' に作成）、価格表 ' + record['pricing_version'] + '。',
            '費用は**参考の見積もり**です（使った量 × 公表価格。請求額ではありません）。Data Agent は 2026-12-31 まで無料試用中です。', '',
            '## やり方ごとの合計（手順 4-4）', '',
-           '| やり方 | 自動チェックの合格 | 参考費用（3 問の合計） | 処理時間の中央値 | Data Agent に頼んだ回数 |', '|---|---|---|---|---|']
+           '| やり方 | 自動チェックで基準と一致 | 参考費用（3 問の合計） | 処理時間の中央値 | Data Agent に頼んだ回数 |', '|---|---|---|---|---|']
     for g in record['groups']:
         seconds = '—' if g['median_seconds'] is None else f"{g['median_seconds']:.1f} 秒"
         out.append('| ' + ' | '.join([g['label'], str(g['structured_successes']) + '/' + str(g['planned']), usd(g['reference_total_usd']), seconds, str(g['data_agent_calls']) + ' 回']) + ' |')
     out += ['', '処理時間は、どのやり方でも答えた同じ質問の中央値です（' + str(record['groups'][0].get('timing_trials')) + ' 問）。', '',
             '## 質問ごとの結果', '', '| 質問 | やり方 | 結果 | 参考費用 | 処理時間 | Data Agent に頼んだ回数 |', '|---|---|---|---|---|---|']
     for t in record['trials']:
-        status = ('判断を保留' if t['outcome'] == 'abstained' else '回答') + ('・自動チェック合格' if t['structured_success'] else '・自動チェック不合格')
+        status = ('判断を保留' if t['outcome'] == 'abstained' else '回答') + ('・自動チェックで基準と一致' if t['structured_success'] else '・自動チェックで基準と不一致')
         out.append('| ' + ' | '.join([t['case_id'], t['variant_label'], status, usd(t['reference_total_usd']), ('—' if t['elapsed_seconds'] is None else f"{t['elapsed_seconds']:.1f} 秒"), str(t['data_agent_calls']) + ' 回']) + ' |')
     if record.get('traces'):
         out += ['', '## Q01 の処理の内訳（手順 3）', '', 'Cloud Trace の記録を、処理名ごとにまとめたものです。Data Agent に頼む回数を減らしても残る処理と時間を確かめます。',
