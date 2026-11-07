@@ -27,16 +27,15 @@ def frame(body):
 def status_chip(t):
     if t['attempt_state']=='pending':return '<span class="chip">未実行</span>'
     if t['attempt_state']=='running':return '<span class="chip">実行中</span>'
-    if t['attempt_state'] not in ('completed','recovered') or t['outcome']=='execution_failed':return '<span class="chip bad">失敗</span>'
-    if not t['structured_success']:
-        x=check_explanation(t)
-        if x['system']:return '<span class="chip bad">記録と計画が不一致</span>'
-        return '<span class="chip bad">不一致：'+esc('、'.join(x['short']) or '詳細を確認')+'</span>'
-    return '<span class="chip '+('hold">保留・一致' if t['outcome']=='abstained' else 'ok">回答・一致')+'</span>'
+    if t['attempt_state'] not in ('completed','recovered') or t['outcome']=='execution_failed':return '<span class="chip bad">実行失敗</span>'
+    # 参加者には自動チェックの判定を出さない（回答の中身は手順 5 で人が読んで確かめる）。
+    # 記録と計画の食い違いだけは、その回の数字を比べに使えないので知らせる。
+    if check_explanation(t)['system']:return '<span class="chip bad">記録と計画が不一致</span>'
+    return '<span class="chip '+('hold">判断を保留' if t['outcome']=='abstained' else 'ok">回答あり')+'</span>'
 
 
 def check_block(t):
-    """回ごとの自動チェックの説明。照らした項目と、基準と違った項目・理由を、折りたたみの外に出す。"""
+    """講師用：回ごとの自動チェックの説明（照らした項目と、基準と違った項目・理由）。参加者の主画面には出さない。"""
     if t['attempt_state'] in ('pending','running'):return ''
     x=check_explanation(t)
     matched='照らして基準と一致した項目：'+'、'.join(x['matched'])+'。' if x['matched'] else ''
@@ -74,8 +73,7 @@ def totals_table(rows, caption):
     head='<table><caption>'+esc(caption)+'</caption><thead><tr><th scope="col"></th>'+''.join('<th scope="col">'+esc(r[0])+'</th>' for r in rows)+('<th scope="col">差</th>' if len(rows)==2 else '')+'</tr></thead><tbody>'
     def diff(a,b):
         return '—' if a is None or b is None or not a else f'{(b-a)/a*100:+.0f}%'
-    lines=[('自動チェックで基準と一致',[str(r[1])+' / '+str(r[2]) for r in rows],''),
-           ('参考費用（合計）',[('未算出' if r[3] is None else f'{r[3]:.3f} USD') for r in rows],diff(rows[0][3],rows[1][3]) if len(rows)==2 else ''),
+    lines=[('参考費用（合計）',[('未算出' if r[3] is None else f'{r[3]:.3f} USD') for r in rows],diff(rows[0][3],rows[1][3]) if len(rows)==2 else ''),
            ('処理時間の中央値',[seconds(r[4])+('' if r[5] is None else '（'+str(r[5])+' 問）') for r in rows],diff(rows[0][4],rows[1][4]) if len(rows)==2 else ''),
            ('Data Agent に頼んだ回数',[str(r[6])+' 回' for r in rows],'')]
     body=''.join('<tr><th scope="row">'+esc(name)+'</th>'+''.join('<td>'+esc(c)+'</td>' for c in cells)+('<td>'+esc(d)+'</td>' if len(rows)==2 else '')+'</tr>' for name,cells,d in lines)
@@ -98,12 +96,11 @@ def render_summit(value, example=None):
     done=sum(t['attempt_state'] not in ('pending','running') for t in trials)
     parts=['<h1>#3 の結果</h1>',
            '<p>3 つの質問を、'+str(len(groups))+' つのやり方で 1 回ずつ答えさせました（合計 '+str(len(trials))+' 回のうち '+str(done)+' 回が終了）。評価計画 <code>'+esc(value['batch_id'])+'</code>、日本時間 '+esc(jst_full(value.get('created_at')))+' に作成。</p>',
-           '<p class="notice">この画面は、AI の出力を調べた結果です。<strong>参加者の採点ではありません。</strong></p>',
            '<p class="notice">費用は<strong>参考の見積もり</strong>です（使った量 × 公表価格。請求額ではありません）。Data Agent は 2026-12-31 まで無料試用中のため、今は Data Agent の分の料金はかかりません。「未算出」は 0 円という意味ではありません。</p>']
     if done<len(trials):parts.append('<p class="notice">まだ実行中です。終わってから、このページを再読み込みしてください。</p>')
     cases=list(dict.fromkeys(t['case_id'] for t in trials))
     by={(t['case_id'],t['variant']):t for t in trials}
-    grid=['<section aria-labelledby="grid"><h2 id="grid">質問 × やり方</h2><p class="hint">マスを押すと、その回の記録へ移動します。「一致」「不一致」は、AI が回答と一緒に返したデータ（数字・期間・単位など）を、教材の基準と照らした結果です。「保留」は「データからは言い切れない」と判断を保留したことです。不一致のマスを押すと、どの項目が違ったかが分かります。回答文の説明は、手順 5 で人が確かめます。</p><div class="scroll" tabindex="0" role="region" aria-label="質問 × やり方"><table><thead><tr><th scope="col">質問</th>'+''.join('<th scope="col">'+esc(g['label'])+'</th>' for g in groups)+'</tr></thead><tbody>']
+    grid=['<section aria-labelledby="grid"><h2 id="grid">質問 × やり方</h2><p class="hint">マスを押すと、その回の回答文と費用の内訳へ移動します。回答が正しいかは、手順 5 で回答文を読んで確かめます。</p><div class="scroll" tabindex="0" role="region" aria-label="質問 × やり方"><table><thead><tr><th scope="col">質問</th>'+''.join('<th scope="col">'+esc(g['label'])+'</th>' for g in groups)+'</tr></thead><tbody>']
     for case in cases:
         question=next(t['question'] for t in trials if t['case_id']==case)
         grid.append('<tr><th scope="row">'+esc(case)+'<small class="hint" style="display:block;font-weight:400">'+esc(question)+'</small></th>')
@@ -141,12 +138,11 @@ def render_summit(value, example=None):
         link='<a href="'+esc(trace)+'" target="_blank" rel="noopener">Cloud Trace で処理を開く ↗</a>' if isinstance(trace,str) and trace.startswith('https://console.cloud.google.com/') else 'Cloud Trace のリンクはありません'
         state=t.get('cost_state')
         parts.append('<article id="'+anchor(t)+'"><h3>'+esc(t['case_id'])+' · '+esc(t['variant_label'])+'</h3><p>'+esc(t['question'])+'</p><p>'+status_chip(t)+' 処理時間 '+esc(seconds(t['elapsed_seconds']))+' ／ Data Agent に頼んだ回数 '+str(data_agent_calls(t))+' 回 ／ 人の確認 '+esc({'pass':'渡せる','fail':'直す必要あり'}.get(t.get('human_review'),'未確認'))+'</p>'
-                     +check_block(t)
                      +('<h4>回答文</h4><p>'+esc(answer)+'</p>' if answer else '<p class="hint">回答文はありません。</p>')
                      +'<table><caption>参考費用の内訳</caption><tbody><tr><th scope="row">Root Agent の AI</th><td>'+esc(part('root_model'))+'</td></tr><tr><th scope="row">Data Agent</th><td>'+esc(part('data_agent'))+'</td></tr><tr><th scope="row">BigQuery</th><td>'+esc(bq)+'</td></tr><tr><th scope="row">合計</th><td>'+esc(trial_cost(t))+'</td></tr></tbody></table>'
                      +('<p class="hint">'+esc(STATE_NOTES[state])+'</p>' if state in STATE_NOTES else '')
                      +'<p class="hint">'+link+' ／ 実行 ID <code>'+esc(t['run_id'])+'</code>（手順 5 で人の確認を記録するときに使います）</p>'
-                     +'<details><summary>詳しい結果・自動チェックの理由</summary><pre>'+esc(json.dumps({'answer':t.get('answer'),'errors':t['errors'],'evidence':t.get('evidence'),'provenance':t.get('provenance'),'routing':t.get('routing'),'cost_components':components},ensure_ascii=False,indent=2))+'</pre></details></article>')
+                     +'<details><summary>講師用：自動チェックと詳しい記録</summary>'+check_block(t)+'<pre>'+esc(json.dumps({'answer':t.get('answer'),'errors':t['errors'],'evidence':t.get('evidence'),'provenance':t.get('provenance'),'routing':t.get('routing'),'cost_components':components},ensure_ascii=False,indent=2))+'</pre></details></article>')
     parts.append('<section><details><summary>講師用の集計とこの結果の範囲</summary><ul>'+''.join('<li>'+esc(x)+'</li>' for x in value['limitations'])+'</ul><pre>'+esc(json.dumps({'groups':groups,'timing_comparison':value.get('timing_comparison')},ensure_ascii=False,indent=2))+'</pre></details></section>')
     return frame(''.join(parts))
 

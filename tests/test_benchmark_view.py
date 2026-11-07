@@ -209,7 +209,7 @@ class BenchmarkViewTests(unittest.TestCase):
         text = json.dumps(record, ensure_ascii=False)
         self.assertNotIn('run_id', text); self.assertNotIn('console.cloud.google.com', text); self.assertNotIn('SELECT', text)
         page = v.example_markdown(record)
-        self.assertIn('あなたの結果ではありません', page); self.assertIn('| Data Agent・毎回取得 | 3/3 | 0.300 USD', page)
+        self.assertIn('あなたの結果ではありません', page); self.assertIn('| Data Agent・毎回取得 | 0.300 USD', page); self.assertNotIn('自動チェック', page)
         self.assertIn('`execute_tool data_agent.ask_data_agent` | 2 | 12.0 秒 ＋ 12.0 秒', page)
         self.assertIn('入れ子', page); self.assertIn('プログラムの起動', page); self.assertIn('0.100000 USD', page)
         self.assertIn('## Q08 の回答文', page)
@@ -287,7 +287,7 @@ class BenchmarkViewTests(unittest.TestCase):
         self.assertEqual(v.period_text({'start': '2026-07-03', 'end_exclusive': '2026-07-21'}), '2026-07-03〜2026-07-20')
         self.assertEqual(v.period_text(None), '空')
 
-    def test_comparison_period_mismatch_names_the_item_and_what_matched(self):
+    def test_check_verdicts_stay_in_the_instructor_details(self):
         p = self.summit(); self.all_trials(p, amount=0.1)
         i = self.q04_off(p); answer = json.loads(json.dumps(p['cases']['Q04']['expected']))
         answer['comparison_period'] = {'start': '2026-07-01', 'end_exclusive': '2026-09-01'}
@@ -300,12 +300,18 @@ class BenchmarkViewTests(unittest.TestCase):
         self.assertIn('基準：2026年7月／この回：2026年7月〜8月', x['problems'][0])
         self.assertIn('数字と単位', x['matched']); self.assertIn('カテゴリなど', x['matched']); self.assertNotIn('比較期間', x['matched'])
         html = render(result)
+        # 参加者の主画面には判定を出さない。回答は「回答あり」、理由は講師用の折りたたみの中だけ
         outside = re.sub(r'<details>.*?</details>', '', html, flags=re.S)
-        self.assertIn('参加者の採点ではありません', outside); self.assertIn('不一致：比較期間', outside)
-        self.assertIn('基準：2026年7月／この回：2026年7月〜8月', outside); self.assertIn('参加者の操作ミスではありません', outside)
-        self.assertIn('詳しい結果・自動チェックの理由', html); self.assertNotIn('不合格', html); self.assertNotIn('講師用の詳しい記録', html)
+        for word in ('一致', '比較期間', '基準と', '基準：', '自動チェック', '合格'):
+            self.assertNotIn(word, outside)
+        self.assertIn('回答あり', outside); self.assertIn('手順 5 で回答文を読んで確かめます', outside)
+        self.assertIn('講師用：自動チェックと詳しい記録', html)
+        self.assertIn('基準：2026年7月／この回：2026年7月〜8月', html); self.assertIn('参加者の操作ミスではありません', html)
+        self.assertTrue(v.mismatch_lines(result)[0].startswith('自動チェックで基準と違った回：Q04・毎回取得（比較期間）'))
         text = '\n'.join(v.summary_lines(result, 'collect'))
-        self.assertIn('自動チェックで基準と違った回：Q04・毎回取得（比較期間）', text)
+        for word in ('自動チェック', '比較期間', '基準', '一致'):
+            self.assertNotIn(word, text)
+        self.assertIn('答えた回数', text); self.assertIn('3/3', text)
 
     def test_changed_conditions_are_not_called_an_answer_problem(self):
         p = self.summit(); self.all_trials(p, amount=0.1)
@@ -317,9 +323,11 @@ class BenchmarkViewTests(unittest.TestCase):
         x = v.check_explanation(row)
         self.assertTrue(x['system']); self.assertFalse(x['answer_issue']); self.assertEqual(x['matched'], [])
         outside = re.sub(r'<details>.*?</details>', '', render(result), flags=re.S)
-        self.assertIn('記録と計画が不一致', outside); self.assertIn('保存された実行記録が、評価計画の質問や設定と一致しません', outside)
-        self.assertNotIn('教材のファイルや設定が変わって', outside)
-        self.assertNotIn('参加者の操作ミスではありません', outside)
+        self.assertIn('記録と計画が不一致', outside); self.assertNotIn('教材のファイルや設定が変わって', outside)
+        self.assertIn('保存された実行記録が、評価計画の質問や設定と一致しません', render(result))
+        self.assertNotIn('参加者の操作ミスではありません', render(result))
+        text = '\n'.join(v.summary_lines(result, 'collect'))
+        self.assertIn('記録と計画が一致しない回：Q04・毎回取得', text); self.assertIn('講師に声をかけてください', text)
 
     def test_matching_answers_name_only_the_checked_items(self):
         p = self.summit(); self.all_trials(p, amount=0.1)

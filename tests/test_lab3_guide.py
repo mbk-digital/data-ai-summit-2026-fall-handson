@@ -97,7 +97,7 @@ class Lab3GuideTests(unittest.TestCase):
         fold = text.index('<details>')
         self.assertLess(text.index('参考費用（3 問の合計）'), fold)
         self.assertIn('結果がない方はこの例を使う', text[fold:])
-        for result in ('- 費用：', '- 時間：', '- ぶれ：', '**無駄な依頼を 1 回減らすと'):
+        for result in ('- 費用：', '- 時間：', '- ぶれ：', '**講師の記録例では、無駄な依頼を 1 回減らすと'):
             with self.subTest(result=result):
                 self.assertGreater(text.index(result), fold)
                 self.assertLess(text.index(result), text.index('</details>'))
@@ -105,6 +105,18 @@ class Lab3GuideTests(unittest.TestCase):
         step_6 = self.guide[self.guide.index('### 判断を書く'):self.guide.index('## 困ったとき')]
         order = [step_6.index(mark) for mark in ('仮の判断', '1 分ずつ話します', '判断を直します', '<summary>考え方の例</summary>')]
         self.assertEqual(order, sorted(order))
+
+    def test_participants_judge_answers_by_reading_not_by_check_verdicts(self):
+        # 参加者向けのページに自動チェックの判定を出さない。手順 5 で、期間と意味まで含めた答えと照らす。
+        for name in ('docs/labs/lab3.md', 'docs/labs/summit.md', 'docs/labs/lab3-example.md'):
+            text = (ROOT/name).read_text(encoding='utf-8')
+            for word in ('自動チェック', '基準と一致', '不一致', '合格'):
+                with self.subTest(file=name, word=word):
+                    self.assertNotIn(word, text.replace('講師用：自動チェックと詳しい記録', ''))
+        step_5 = section(self.guide, '## 手順 5．', '## 手順 6．')
+        self.assertIn('| Q01 | 2026年8月の純売上：240,000円 |', step_5)
+        self.assertIn('| Q04 | 7月と比べて8月の粗利益が最も減ったカテゴリ：Electronics、8月−7月の差額：−64,000円 |', step_5)
+        self.assertIn('「問題を見つけなかった」「問題があった」「判断できない」', section(self.guide, '### 判断を書く', '### 隣の人と話す'))
 
     def test_step_6_table_follows_the_rounded_standard_values(self):
         reuse, fetch = self.per_item('Data Agent・再利用'), self.per_item('Data Agent・毎回取得')

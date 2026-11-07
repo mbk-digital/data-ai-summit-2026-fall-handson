@@ -193,8 +193,17 @@ def check_explanation(row):
             'answer_issue': bool(problems) and not system}
 
 
+def record_mismatch_lines(result):
+    """run・collect の表の下。保存された実行記録が評価計画と一致しない回だけを知らせる（自動チェックの判定は出さない）。"""
+    names = [t['case_id'] + '・' + t['variant_label'].replace('Data Agent・', '') for t in result['trials']
+             if t.get('attempt_state') in ('completed', 'recovered') and check_explanation(t)['system']]
+    if not names:
+        return []
+    return ['記録と計画が一致しない回：' + '、'.join(names) + '。この回の数字は比べに使えません。講師に声をかけてください。']
+
+
 def mismatch_lines(result):
-    """run・collect の表の下。基準と違った回と、その項目の名前だけを出す。"""
+    """講師用：基準と違った回と、その項目の名前。参加者向けの表には出さない。"""
     names = []
     for t in result['trials']:
         if t.get('attempt_state') not in ('completed', 'recovered') or t.get('structured_success'):
@@ -228,17 +237,21 @@ def summary_lines(result, stage):
         lines.append('質問の結果')
     lines.append('')
     size = max(width(g['label']) for g in result['groups']) + 4
-    head = '  ' + pad('やり方', size) + pad('自動チェック', 14) + (pad('参考費用（合計）', 30) if stage == 'collect' else '') + '処理時間の中央値'
+    # 参加者には自動チェックの判定を出さない（回答の中身は手順 5 で人が読んで確かめる）。判定は report に残る。
+    head = '  ' + pad('やり方', size) + pad('答えた回数', 14) + (pad('参考費用（合計）', 30) if stage == 'collect' else '') + '処理時間の中央値'
     lines.append(head)
     for g in result['groups']:
         # 比べるときは同じ質問・同じ回の中央値だけ。対象がなければ全回の中央値には戻さない。
         seconds = g.get('median_wall_seconds') if g.get('common_timing') is None else g['common_timing'].get('median_seconds')
-        cells = '  ' + pad(g['label'], size) + pad(str(g['structured_successes']) + '/' + str(g['planned']), 14)
+        rows = rows_of[g['variant']]
+        answered = sum(t.get('outcome') in ('answered', 'abstained') for t in rows)
+        cells = '  ' + pad(g['label'], size) + pad(str(answered) + '/' + str(g['planned']), 14)
         if stage == 'collect':
             cells += pad(group_cost(g, rows_of[g['variant']]), 30)
         lines.append(cells + ('—' if seconds is None else f'{seconds:.1f} 秒'))
     lines.append('')
-    lines += mismatch_lines(result)
+    lines.append('答えた回数は、回答した回と判断を保留した回の数です。回答が正しいかは、手順 5 で回答文を読んで確かめます。')
+    lines += [x for x in record_mismatch_lines(result)]
     note = timing_note(result)
     if note:
         lines.append(note)
@@ -353,14 +366,14 @@ def example_markdown(record):
            '', '評価計画 `' + record['batch_id'] + '`（日本時間 ' + jst(record.get('created_at')) + ' に作成）、価格表 ' + record['pricing_version'] + '。',
            '費用は**参考の見積もり**です（使った量 × 公表価格。請求額ではありません）。Data Agent は 2026-12-31 まで無料試用中です。', '',
            '## やり方ごとの合計（手順 4-4）', '',
-           '| やり方 | 自動チェックで基準と一致 | 参考費用（3 問の合計） | 処理時間の中央値 | Data Agent に頼んだ回数 |', '|---|---|---|---|---|']
+           '| やり方 | 参考費用（3 問の合計） | 処理時間の中央値 | Data Agent に頼んだ回数 |', '|---|---|---|---|']
     for g in record['groups']:
         seconds = '—' if g['median_seconds'] is None else f"{g['median_seconds']:.1f} 秒"
-        out.append('| ' + ' | '.join([g['label'], str(g['structured_successes']) + '/' + str(g['planned']), usd(g['reference_total_usd']), seconds, str(g['data_agent_calls']) + ' 回']) + ' |')
+        out.append('| ' + ' | '.join([g['label'], usd(g['reference_total_usd']), seconds, str(g['data_agent_calls']) + ' 回']) + ' |')
     out += ['', '処理時間は、どのやり方でも答えた同じ質問の中央値です（' + str(record['groups'][0].get('timing_trials')) + ' 問）。', '',
             '## 質問ごとの結果', '', '| 質問 | やり方 | 結果 | 参考費用 | 処理時間 | Data Agent に頼んだ回数 |', '|---|---|---|---|---|---|']
     for t in record['trials']:
-        status = ('判断を保留' if t['outcome'] == 'abstained' else '回答') + ('・自動チェックで基準と一致' if t['structured_success'] else '・自動チェックで基準と不一致')
+        status = '判断を保留' if t['outcome'] == 'abstained' else '回答あり'
         out.append('| ' + ' | '.join([t['case_id'], t['variant_label'], status, usd(t['reference_total_usd']), ('—' if t['elapsed_seconds'] is None else f"{t['elapsed_seconds']:.1f} 秒"), str(t['data_agent_calls']) + ' 回']) + ' |')
     if record.get('traces'):
         out += ['', '## Q01 の処理の内訳（手順 3）', '', 'Cloud Trace の記録を、処理名ごとにまとめたものです。Data Agent に頼む回数を減らしても残る処理と時間を確かめます。',
@@ -378,7 +391,11 @@ def example_markdown(record):
     for t in record['trials']:
         bq = usd(t['cost']['bigquery_query'], 6) + ('（保存済みのクエリ結果を再利用）' if t['bigquery_cache_reused'] else '')
         out.append('| ' + ' | '.join([t['case_id'], t['variant_label'], usd(t['cost']['root_model'], 6), usd(t['cost']['data_agent'], 6), bq]) + ' |')
-    out += ['', '## Q08 の回答文（手順 5）', '']
+    out += ['', '## Q01・Q04 の回答文（手順 5）', '', '手順 5 の照らし合わせる答えと比べます。', '']
+    for t in record['trials']:
+        if t['case_id'] in ('Q01', 'Q04'):
+            out += ['**' + t['case_id'] + '・' + t['variant_label'] + '**', '', '> ' + (t['answer_text'] or '（回答文なし）').replace('\n', '\n> '), '']
+    out += ['## Q08 の回答文（手順 5）', '']
     for t in record['trials']:
         if t['case_id'] == 'Q08':
             out += ['**' + t['variant_label'] + '**', '', '> ' + (t['answer_text'] or '（回答文なし）').replace('\n', '\n> '), '']
