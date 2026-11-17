@@ -76,6 +76,8 @@ cd summit-workshop
 | 準備（事前イベントに参加した方） | ① [教材の更新手順](docs/cloud-shell-workflow.md#教材を更新する) ② [Summit の開始確認](docs/labs/checkpoint.md) | 主催者の案内に沿って教材を Summit 用の版に更新し、開始確認で「開始できます。」と表示された |
 | 実習 3 | [AI エージェントに任せると、何が変わるか](docs/labs/lab3.md) | 2 つの場面で、人・AI エージェント（毎回取得・再利用）のどれを選ぶかと、その理由を書いた |
 
+**補助資料（操作に迷った方向け）：** 同じ順番で手順を画面付きにまとめた[操作ガイド（画面キャプチャ）](https://drive.google.com/file/d/1hTjtKfFkA_Q-c2E6bl8ffbYUzYq9Jt4S/view?usp=sharing)を参照してください。
+
 準備は、できれば当日より前に済ませてください。当日より前に済ませた方は、当日の最初に[開始確認](docs/labs/checkpoint.md)をもう一度実行します（環境がまだ使えるかを確かめます。1 分ほどで終わり、環境に変更がなければ何も作りません）。当日その場で準備した方は、もう一度実行せずに実習 3 へ進みます。
 
 事前イベントに参加していなくても、Summit から参加できます。当日は、実習 1・2 の内容を短く振り返ってから実習 3 へ進みます。時間をかけて操作から理解したい方は、事前に上の「事前イベントに参加する方」の表の実習 1・2 も体験できます（任意）。進めた場合も、最後に [Summit の開始確認](docs/labs/checkpoint.md)を実行します。事前イベントで投影した[説明資料（スライド）](https://docs.google.com/presentation/d/1u_TbciboQ0xSoQ0SB4UqgTuiMItl4Iq-Ru2t3Ep4KtA/edit?usp=sharing)も公開しています。
