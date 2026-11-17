@@ -25,7 +25,9 @@ def compact_response(response):
             result['final_text'].extend(txt.get('parts', []))
         if item.get('data', {}).get('generatedSql'):
             result['sql'].append(item['data']['generatedSql'])
-        if 'Data Retrieved' in item:
+        # When one request runs several queries, the Data Agent can return a placeholder string
+        # ("Intermediate result omitted") in place of an earlier table. Only real tables are evidence.
+        if isinstance(item.get('Data Retrieved'), dict):
             result['tables'].append(item['Data Retrieved'])
     if not result['final_text']:
         result.update(status='ERROR', error='No final answer returned')

@@ -31,6 +31,20 @@ class RootEvidenceTests(unittest.TestCase):
         self.assertEqual(r['final_text'],['answer'])
         self.assertEqual(compact_response({'status':'SUCCESS','response':[]})['status'],'ERROR')
 
+    def test_omitted_intermediate_table_is_not_evidence(self):
+        from workshop.root_evidence import review_evidence, numeric_values
+        table={'headers':['month_start','gross_profit_jpy'],'rows':[['2026-07-01',104000],['2026-08-01',60000]]}
+        r = compact_response({'status':'SUCCESS','response':[
+            {'data':{'generatedSql':'SELECT 1'}},{'Data Retrieved':'Intermediate result omitted'},
+            {'data':{'generatedSql':'SELECT 2'}},{'Data Retrieved':table},
+            {'text':{'textType':'FINAL_RESPONSE','parts':['answer']}}]})
+        self.assertEqual(r['status'],'SUCCESS')
+        self.assertEqual(r['tables'],[table])
+        self.assertEqual(len(r['sql']),2)
+        self.assertTrue(review_evidence(r,{})['structural_checks_passed'])
+        self.assertIsNone(required_tool([r],[]))
+        self.assertIn(60000,numeric_values([r]))
+
     def test_fault_and_cache_are_request_local(self):
         async def scenario(enabled):
             calls=[]
